@@ -111,9 +111,11 @@ def generate_pdf_report(
     week_start: str,
     week_end: str,
     output_path: str,
+    kpi_summary: str = "",
 ) -> str:
     """
     Generate a branded PDF from the markdown-style report text.
+    Optionally includes a KPI summary box below the header.
     Returns the output_path on success.
     """
     parent_dir = os.path.dirname(output_path)
@@ -143,6 +145,17 @@ def generate_pdf_report(
         )
     )
     story.append(HRFlowable(width="100%", thickness=1, color=BRAND_MID, spaceAfter=10))
+
+    # KPI summary section (if provided)
+    if kpi_summary:
+        story.append(Paragraph("KEY PERFORMANCE INDICATORS", styles["heading"]))
+        for kpi_line in kpi_summary.split("\n"):
+            kpi_line = kpi_line.strip()
+            if not kpi_line or kpi_line.startswith("─") or kpi_line.startswith("KPI DASHBOARD"):
+                continue
+            story.append(Paragraph(kpi_line, styles["body"]))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=BRAND_MUTED, spaceAfter=8))
+        story.append(Spacer(1, 6))
 
     # Parse report text
     for line in report_text.split("\n"):

@@ -3,29 +3,43 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Required ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_token_here":
-    raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env — open .env and add your token")
+    raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env — add your token from @BotFather")
 
-# Vision + text model (qwen3-vl:30b — used for invoice photos and weekly reports)
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-vl:30b")
+# ── AI Backend — Claude API (recommended) or Ollama (self-hosted fallback) ───
+# If ANTHROPIC_API_KEY is set, Claude API is used automatically.
+# Claude Haiku costs ~$0.002/restaurant/month — no GPU server needed.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", None)
 
-# Fast text-only model (gemma3:4b — used for quick text entry analysis)
+# Ollama fallback settings (used only when ANTHROPIC_API_KEY is not set)
+OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "qwen3-vl:30b")
 OLLAMA_TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "gemma3:4b")
+OLLAMA_HOST       = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
-# Ollama API host (default: local; change for remote Ollama servers)
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-
-# Whisper voice transcription
+# ── Voice transcription ───────────────────────────────────────────────────────
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
-WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", None)  # None = auto-detect
+WHISPER_LANGUAGE   = os.getenv("WHISPER_LANGUAGE", None)  # None = auto-detect
 
-# Database file path
+# ── Database ──────────────────────────────────────────────────────────────────
 DB_PATH = os.getenv("DB_PATH", "restaurant_iq.db")
 
-# Optional: Telegram user ID of the admin (receives Ollama health alerts)
-ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", None)
+# ── SaaS / Billing ───────────────────────────────────────────────────────────
+# Stripe API keys — needed to process subscription payments
+STRIPE_SECRET_KEY      = os.getenv("STRIPE_SECRET_KEY", None)
+STRIPE_WEBHOOK_SECRET  = os.getenv("STRIPE_WEBHOOK_SECRET", None)
 
-# Scheduled weekly report delivery (server local time)
-REPORT_DAY = os.getenv("REPORT_DAY", "monday").lower()
+# Public upgrade URL shown to users when trial expires
+UPGRADE_URL = os.getenv("UPGRADE_URL", "https://restaurantiq.app/upgrade")
+
+# ── Scheduling ────────────────────────────────────────────────────────────────
+REPORT_DAY  = os.getenv("REPORT_DAY", "monday").lower()
 REPORT_TIME = os.getenv("REPORT_TIME", "08:00")
+
+# Daily flash report time (sent to all active restaurants each evening)
+FLASH_REPORT_TIME = os.getenv("FLASH_REPORT_TIME", "18:00")
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+# Telegram user ID of the platform admin — receives health alerts
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", None)
