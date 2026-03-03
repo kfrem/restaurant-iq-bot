@@ -43,3 +43,24 @@ FLASH_REPORT_TIME = os.getenv("FLASH_REPORT_TIME", "18:00")
 # ── Admin ─────────────────────────────────────────────────────────────────────
 # Telegram user ID of the platform admin — receives health alerts
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", None)
+
+# ── Flivio integration ────────────────────────────────────────────────────────
+# URL of your Flivio instance (e.g. https://flivio.yourdomain.com)
+FLIVIO_API_URL = os.getenv("FLIVIO_API_URL", None)
+# API key for bot→Flivio data push (set in Flivio admin panel)
+FLIVIO_API_KEY = os.getenv("FLIVIO_API_KEY", None)
+# Public URL shown to Managed/Enterprise clients for their dashboard
+FLIVIO_DASHBOARD_URL = os.getenv("FLIVIO_DASHBOARD_URL", "https://app.flivio.com")
+
+# ── Analyst team ──────────────────────────────────────────────────────────────
+# Comma-separated Telegram user IDs of your analyst team
+# These users can use /analyst commands in any chat with the bot
+ANALYST_TELEGRAM_IDS = [
+    x.strip() for x in os.getenv("ANALYST_TELEGRAM_IDS", "").split(",") if x.strip()
+]
+# How long (hours) an analyst has to review a report before it auto-sends
+ANALYST_REVIEW_WINDOW_HOURS = int(os.getenv("ANALYST_REVIEW_WINDOW_HOURS", "4"))
+
+# ── Default UK region ─────────────────────────────────────────────────────────
+# Used for supplier database searches when client hasn't specified their region
+DEFAULT_REGION = os.getenv("DEFAULT_REGION", "london")

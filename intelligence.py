@@ -7,27 +7,31 @@ Converts raw DB entry data into actionable financial metrics:
   - Cover counts and revenue totals
   - Week-on-week trend deltas
   - Supplier price change detection
-  - Industry benchmark comparisons
+  - UK-wide industry benchmark comparisons
 
-London restaurant industry benchmarks (source: UKHospitality, CGA, ALMR data):
+UK restaurant industry benchmarks (source: UKHospitality, CGA, ALMR, Lumina data):
   Casual dining:  food cost ~28–32%, GP ~70%, avg spend ~£28, ~400 covers/week
   Fine dining:    food cost ~32–38%, GP ~68%, avg spend ~£75, ~200 covers/week
   QSR / fast:     food cost ~28–32%, GP ~70%, avg spend ~£12, ~800 covers/week
   Café / brunch:  food cost ~25–30%, GP ~73%, avg spend ~£15, ~500 covers/week
   Pub/gastropub:  food cost ~28–34%, GP ~70%, avg spend ~£22, ~550 covers/week
+
+Note: UK national averages used. London operators typically run 5-8% higher
+cost bases but achieve 10-20% higher average spend. Regional operators
+outside London often achieve better GP margins due to lower fixed costs.
 """
 
 from collections import defaultdict
 from typing import Optional
 
-# ─── Industry benchmarks ──────────────────────────────────────────────────────
+# ─── UK Industry benchmarks ───────────────────────────────────────────────────
 
 BENCHMARKS = {
-    "casual":  {"food_cost_pct": 30, "gp_pct": 70, "avg_spend": 28,  "covers_week": 400},
-    "fine":    {"food_cost_pct": 35, "gp_pct": 65, "avg_spend": 75,  "covers_week": 200},
-    "qsr":     {"food_cost_pct": 30, "gp_pct": 70, "avg_spend": 12,  "covers_week": 800},
-    "cafe":    {"food_cost_pct": 27, "gp_pct": 73, "avg_spend": 15,  "covers_week": 500},
-    "gastropub": {"food_cost_pct": 31, "gp_pct": 69, "avg_spend": 22, "covers_week": 550},
+    "casual":    {"food_cost_pct": 30, "gp_pct": 70, "avg_spend": 28,  "covers_week": 400},
+    "fine":      {"food_cost_pct": 35, "gp_pct": 65, "avg_spend": 75,  "covers_week": 200},
+    "qsr":       {"food_cost_pct": 30, "gp_pct": 70, "avg_spend": 12,  "covers_week": 800},
+    "cafe":      {"food_cost_pct": 27, "gp_pct": 73, "avg_spend": 15,  "covers_week": 500},
+    "gastropub": {"food_cost_pct": 31, "gp_pct": 69, "avg_spend": 22,  "covers_week": 550},
 }
 DEFAULT_BENCHMARK = BENCHMARKS["casual"]
 

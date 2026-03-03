@@ -1,19 +1,33 @@
 """
-subscription.py — Subscription and trial management for Restaurant-IQ SaaS.
+subscription.py — Three-tier subscription model for Restaurant-IQ.
 
-Pricing tiers (all GBP, billed monthly):
-  Trial    — 14 days free, full access, no card required
-  Starter  — £149/month  · 1 location
-  Growth   — £399/month  · 3 locations  · premium features
-  Pro      — £999/month  · 10 locations · full suite
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TIER 1 — Solo (£149/month)
+  Fully automated Telegram bot intelligence.
+  Best for: price-conscious owners comfortable with technology.
+  Human involvement: none.
+  1 location · All core bot commands · Weekly AI briefing + PDF
 
-Feature gating:
-  All tiers get: /status /today /weeklyreport /history /export /deletedata
-  Growth+:       /compare /suppliers /targets (week-on-week & supplier intelligence)
-  Pro:           /benchmark (cross-network anonymised benchmarks)
+TIER 2 — Managed (£499/month)
+  Bot + Flivio dashboard + a real human advisor.
+  Best for: growing independents who want a sounding board.
+  Human involvement: 2 hours/week analyst review.
+  3 locations · Named advisor · Advisor-annotated weekly reports
+  · Flivio dashboard access · Monthly 30-min check-in call
 
-Stripe handles billing; this module handles feature gating and trial tracking.
-Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in .env to enable live billing.
+TIER 3 — Enterprise (£999/month)
+  Full-service intelligence with dedicated advisory support.
+  Best for: serious operators, groups, chef-owners scaling up.
+  Human involvement: 4 hours/week + fortnightly scheduled call.
+  10 locations · Dedicated analyst · Analyst attends to your data
+  · Flivio full access · Supplier database · Custom integrations
+  · Competitor benchmarking · Priority 24hr support
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANT DESIGN PRINCIPLE:
+  Even Solo clients feel the human touch through personalised onboarding,
+  a named founder message on first report, and upgrade paths that feel like
+  gaining a real advisor — not just unlocking software features.
 """
 
 from datetime import datetime, timedelta
@@ -22,35 +36,82 @@ from config import UPGRADE_URL
 TRIAL_DAYS = 14
 
 TIERS = {
-    "starter": {
-        "name":        "Starter",
-        "price_gbp":   149,
-        "locations":   1,
-        "features":    {"compare": False, "suppliers": False, "targets": False, "benchmark": False},
-        "description": "1 location · All core features · 90-day history",
+    "solo": {
+        "name":               "Solo",
+        "price_gbp":          149,
+        "locations":          1,
+        "human_hours_week":   0,
+        "flivio_access":      False,
+        "supplier_db":        False,
+        "calls_per_month":    0,
+        "support_hours":      "5 business days",
+        "features": {
+            "compare":   True,
+            "suppliers": True,
+            "targets":   True,
+            "benchmark": False,
+            "findsupplier": False,
+            "flivio":    False,
+        },
+        "pitch": (
+            "Fully automated AI intelligence from your team's voice notes and invoices.\n"
+            "Your bot works 24/7 — no staff training, no dashboards to log into.\n"
+            "Weekly briefing + PDF every Monday at 08:00."
+        ),
     },
-    "growth": {
-        "name":        "Growth",
-        "price_gbp":   399,
-        "locations":   3,
-        "features":    {"compare": True, "suppliers": True, "targets": True, "benchmark": False},
-        "description": "3 locations · Week-on-week analysis · Supplier intelligence",
+    "managed": {
+        "name":               "Managed",
+        "price_gbp":          499,
+        "locations":          3,
+        "human_hours_week":   2,
+        "flivio_access":      True,
+        "supplier_db":        False,
+        "calls_per_month":    1,
+        "support_hours":      "48 hours",
+        "features": {
+            "compare":   True,
+            "suppliers": True,
+            "targets":   True,
+            "benchmark": True,
+            "findsupplier": False,
+            "flivio":    True,
+        },
+        "pitch": (
+            "Everything in Solo, plus a named restaurant advisor who reviews your data\n"
+            "every week and adds their own commentary to your weekly report.\n"
+            "A human who knows your business — not just a bot.\n"
+            "Includes Flivio dashboard, 3 locations, and a monthly 30-min call."
+        ),
     },
-    "pro": {
-        "name":        "Pro",
-        "price_gbp":   999,
-        "locations":   10,
-        "features":    {"compare": True, "suppliers": True, "targets": True, "benchmark": True},
-        "description": "10 locations · Benchmarking · Priority support",
+    "enterprise": {
+        "name":               "Enterprise",
+        "price_gbp":          999,
+        "locations":          10,
+        "human_hours_week":   4,
+        "flivio_access":      True,
+        "supplier_db":        True,
+        "calls_per_month":    2,
+        "support_hours":      "24 hours",
+        "features": {
+            "compare":   True,
+            "suppliers": True,
+            "targets":   True,
+            "benchmark": True,
+            "findsupplier": True,
+            "flivio":    True,
+        },
+        "pitch": (
+            "Your dedicated analyst works with you and your data every week.\n"
+            "They access your POS, accounting and operational data directly —\n"
+            "intelligence the bot alone cannot deliver.\n"
+            "10 locations · fortnightly calls · supplier database ·\n"
+            "custom integrations · priority 24hr support."
+        ),
     },
 }
 
-# Trial and all paid tiers have access to base features
-_BASE_FEATURES = {"compare": True, "suppliers": True, "targets": True, "benchmark": False}
-
 
 def trial_days_remaining(restaurant) -> int:
-    """Days remaining in free trial (0 if trial expired or not in trial)."""
     status = restaurant.get("subscription_status", "trial")
     if status not in (None, "trial"):
         return 0
@@ -61,14 +122,10 @@ def trial_days_remaining(restaurant) -> int:
         trial_end = created + timedelta(days=TRIAL_DAYS)
         return max(0, (trial_end - datetime.now()).days)
     except (ValueError, AttributeError):
-        return TRIAL_DAYS  # Assume full trial if we can't parse
+        return TRIAL_DAYS
 
 
 def is_active(restaurant) -> bool:
-    """
-    Return True if this restaurant has active access (trial or paid subscription).
-    All features are locked once trial expires and no subscription exists.
-    """
     status = restaurant.get("subscription_status", "trial")
     if status == "active":
         return True
@@ -78,99 +135,111 @@ def is_active(restaurant) -> bool:
 
 
 def get_tier(restaurant) -> str:
-    """Return the current tier label: trial / starter / growth / pro."""
     status = restaurant.get("subscription_status", "trial")
     if status in (None, "trial"):
         return "trial"
-    return restaurant.get("subscription_tier") or "starter"
+    return restaurant.get("subscription_tier") or "solo"
+
+
+def get_tier_info(restaurant) -> dict:
+    tier = get_tier(restaurant)
+    if tier == "trial":
+        # Trial gets Managed-level features to give full taste of the product
+        return TIERS["managed"]
+    return TIERS.get(tier, TIERS["solo"])
 
 
 def has_feature(restaurant, feature: str) -> bool:
-    """
-    Return True if this restaurant's tier includes the given feature.
-    During trial, all features including Growth-level are available.
-    """
     if not is_active(restaurant):
         return False
     tier = get_tier(restaurant)
     if tier == "trial":
-        # Full access during trial — let them experience everything
-        return _BASE_FEATURES.get(feature, False)
-    return TIERS.get(tier, {}).get("features", {}).get(feature, False)
+        return TIERS["managed"]["features"].get(feature, False)
+    return TIERS.get(tier, TIERS["solo"])["features"].get(feature, False)
+
+
+def has_human_advisor(restaurant) -> bool:
+    """Return True if this tier includes a human advisor."""
+    tier = get_tier(restaurant)
+    if tier == "trial":
+        return False  # Trial is bot-only to preserve analyst capacity
+    return TIERS.get(tier, {}).get("human_hours_week", 0) > 0
 
 
 def max_locations(restaurant) -> int:
-    """Maximum registered locations for this tier."""
     tier = get_tier(restaurant)
     if tier == "trial":
         return 1
-    return TIERS.get(tier, {"locations": 1})["locations"]
+    return TIERS.get(tier, TIERS["solo"])["locations"]
 
 
 def trial_banner(restaurant) -> str:
-    """
-    Short banner appended to command responses during trial.
-    Returns empty string if paid subscription.
-    """
     status = restaurant.get("subscription_status", "trial")
     if status == "active":
         return ""
-    days_left = trial_days_remaining(restaurant)
-    if days_left > 3:
-        return f"\n\n─\n🔔 Free trial: {days_left} days remaining. {UPGRADE_URL}"
-    if days_left > 0:
+    days = trial_days_remaining(restaurant)
+    if days > 3:
+        return f"\n\n─\n🔔 Free trial: {days} days remaining. {UPGRADE_URL}"
+    if days > 0:
         return (
-            f"\n\n─\n⚠️ Trial ends in {days_left} day{'s' if days_left != 1 else ''}! "
-            f"Subscribe to keep your data and reports: {UPGRADE_URL}"
+            f"\n\n─\n⚠️ Trial ends in {days} day{'s' if days != 1 else ''}! "
+            f"Subscribe to keep your data: {UPGRADE_URL}"
         )
     return ""
 
 
 def upgrade_prompt(restaurant) -> str:
-    """
-    Full upgrade message shown when trial has expired or a feature is gated.
-    """
-    days_left = trial_days_remaining(restaurant)
+    days = trial_days_remaining(restaurant)
     status = restaurant.get("subscription_status", "trial")
+    tier = get_tier(restaurant)
 
     if status == "active":
-        tier = get_tier(restaurant)
-        tier_info = TIERS.get(tier, {})
+        info = TIERS.get(tier, TIERS["solo"])
         return (
-            f"You're on the {tier_info.get('name', tier.title())} plan "
-            f"(£{tier_info.get('price_gbp', '?')}/month).\n"
-            f"To upgrade, visit: {UPGRADE_URL}"
+            f"You're on the {info['name']} plan (£{info['price_gbp']}/month).\n\n"
+            + _tier_comparison_text()
+            + f"\n\nUpgrade or manage your subscription: {UPGRADE_URL}"
         )
 
-    if days_left > 0:
-        header = f"⚠️ Your free trial ends in {days_left} day{'s' if days_left != 1 else ''}."
-    else:
-        header = "🔒 Your free trial has ended."
-
-    plans = "\n".join(
-        f"  {info['name']} — £{info['price_gbp']}/month\n  {info['description']}"
-        for info in TIERS.values()
+    header = (
+        f"⚠️ Free trial ends in {days} day{'s' if days != 1 else ''}."
+        if days > 0
+        else "🔒 Your free trial has ended."
     )
 
     return (
         f"{header}\n\n"
-        "Choose a Restaurant-IQ plan to continue:\n\n"
-        f"{plans}\n\n"
-        f"Subscribe at: {UPGRADE_URL}\n"
-        "All plans include a 30-day money-back guarantee."
+        "Choose the right plan for your restaurant:\n\n"
+        + _tier_comparison_text()
+        + f"\n\nAll plans include 30-day money-back guarantee.\n{UPGRADE_URL}"
     )
 
 
+def _tier_comparison_text() -> str:
+    lines = []
+    for info in TIERS.values():
+        human_str = (
+            f"{info['human_hours_week']}hrs/wk advisor"
+            if info["human_hours_week"] > 0
+            else "automated"
+        )
+        lines.append(
+            f"  {info['name']} — £{info['price_gbp']}/month\n"
+            f"  {info['locations']} location{'s' if info['locations'] > 1 else ''} · "
+            f"{human_str} · {info['support_hours']} support\n"
+            f"  {info['pitch'].split(chr(10))[0]}"
+        )
+    return "\n\n".join(lines)
+
+
 def status_summary(restaurant) -> str:
-    """
-    One-line subscription status for display in /status or /upgrade commands.
-    """
     status = restaurant.get("subscription_status", "trial")
     if status == "active":
         tier = get_tier(restaurant)
-        info = TIERS.get(tier, {})
-        return f"✅ {info.get('name', tier.title())} plan — £{info.get('price_gbp', '?')}/month"
-    days_left = trial_days_remaining(restaurant)
-    if days_left > 0:
-        return f"🔔 Free trial — {days_left} day{'s' if days_left != 1 else ''} remaining"
+        info = TIERS.get(tier, TIERS["solo"])
+        human = f" · {info['human_hours_week']}hrs/wk advisor" if info["human_hours_week"] > 0 else ""
+        return f"✅ {info['name']} plan — £{info['price_gbp']}/month{human}"
+    days = trial_days_remaining(restaurant)
+    if days > 0:
+        return f"🔔 Free trial — {days} day{'s' if days != 1 else ''} remaining"
     return "🔒 Trial expired — subscription required"

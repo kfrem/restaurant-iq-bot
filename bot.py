@@ -18,10 +18,14 @@ COMMANDS
   /compare        This week vs last week analysis
   /suppliers      Supplier price changes detected from invoices
   /targets        Set KPI targets and restaurant type
-  /benchmark      Compare KPIs to London industry benchmarks (Pro)
+  /benchmark      Compare KPIs to UK industry benchmarks (Enterprise)
   /export         Download this week's entries as CSV
   /deletedata     Delete entries >90 days (GDPR, owner only)
   /upgrade        View plans and subscription status
+  /myanalyst      Your assigned advisor details (Managed/Enterprise)
+  /findsupplier   Search UK supplier directory (Enterprise full list)
+  /flivio         Open your Flivio analytics dashboard (Managed/Enterprise)
+  /analyst        Internal analyst commands (team use only)
 
 MESSAGES (all auto-analysed)
   Voice note → Whisper transcription → AI extraction → stored
@@ -58,10 +62,40 @@ from ai_client import (
 )
 from config import (
     ADMIN_TELEGRAM_ID,
+    ANALYST_REVIEW_WINDOW_HOURS,
+    ANALYST_TELEGRAM_IDS,
+    FLIVIO_DASHBOARD_URL,
     FLASH_REPORT_TIME,
     REPORT_DAY,
     REPORT_TIME,
     TELEGRAM_BOT_TOKEN,
+)
+from crm import (
+    add_analyst_note,
+    approve_report,
+    assign_analyst,
+    client_health_score,
+    create_analyst,
+    create_pending_report,
+    format_analyst_digest,
+    format_analyst_note_for_report,
+    get_all_analysts,
+    get_analyst_by_telegram_id,
+    get_analyst_for_restaurant,
+    get_clients_for_analyst,
+    get_hours_summary_for_analyst,
+    get_hours_this_week,
+    get_pending_report,
+    get_pending_report_by_restaurant,
+    get_pending_reports_for_analyst,
+    log_analyst_hours,
+    set_pending_report_note,
+)
+from supplier_db import format_supplier_results, search_suppliers
+from flivio_bridge import (
+    export_entries_to_flivio_csv,
+    get_flivio_dashboard_url,
+    get_integration_status,
 )
 from database import (
     delete_all_entries,
@@ -73,6 +107,7 @@ from database import (
     get_prev_week_entries,
     get_report_by_week,
     get_restaurant_by_group,
+    get_restaurant_by_id,
     get_supplier_prices,
     get_week_entries,
     get_weekly_reports,
@@ -94,7 +129,9 @@ from intelligence import (
 )
 from report_generator import generate_pdf_report
 from subscription import (
+    get_tier,
     has_feature,
+    has_human_advisor,
     is_active,
     status_summary,
     trial_banner,
@@ -222,10 +259,13 @@ def _week_bounds(offset_weeks: int = 0):
 
 
 async def _deliver_weekly_report(send_text, send_doc, restaurant, entries,
-                                  prev_entries=None, triggered_by_schedule=False):
+                                  prev_entries=None, triggered_by_schedule=False,
+                                  bot=None):
     """
     Core weekly report logic — shared between /weeklyreport and the scheduled job.
     `send_text` and `send_doc` are async callables so this works for both contexts.
+    For Managed/Enterprise tiers the AI draft is routed to the assigned analyst
+    for review before delivery (human-in-the-loop). `bot` is required for that path.
     """
     if not entries:
         if not triggered_by_schedule:
@@ -281,11 +321,53 @@ async def _deliver_weekly_report(send_text, send_doc, restaurant, entries,
         kpi_summary=kpi_context,
     )
 
-    # Send text (section-split if long)
+    # ── Human-in-the-loop for Managed / Enterprise ──────────────────────────
+    if has_human_advisor(restaurant) and bot:
+        analyst = get_analyst_for_restaurant(restaurant["id"])
+        if analyst and analyst.get("telegram_id"):
+            pending_id = create_pending_report(
+                restaurant["id"], report_text, pdf_path, week_start
+            )
+            analyst_tid = analyst["telegram_id"]
+            try:
+                await bot.send_message(
+                    chat_id=analyst_tid,
+                    text=(
+                        f"📋 NEW REPORT TO REVIEW\n"
+                        f"{'─' * 30}\n"
+                        f"Client: {restaurant['name']}\n"
+                        f"Week:   {week_start}\n"
+                        f"Entries: {n}\n\n"
+                        f"Review and approve with:\n"
+                        f"/analyst approve {pending_id}\n\n"
+                        f"Add a note first (optional):\n"
+                        f"/analyst addnote {pending_id} Your note here\n\n"
+                        f"Once approved the report is automatically sent to the client."
+                    ),
+                )
+                await send_text(
+                    f"Your weekly briefing has been prepared and sent to your advisor "
+                    f"{analyst['name']} for a final review.\n\n"
+                    f"You will receive it within {ANALYST_REVIEW_WINDOW_HOURS} hours, "
+                    f"enriched with their personal insights."
+                )
+            except Exception as e:
+                logger.error(f"Could not notify analyst {analyst_tid}: {e}")
+                # Fall through to direct delivery if analyst notification fails
+                await _send_report_to_chat(send_text, send_doc, report_text, pdf_path,
+                                           restaurant, week_start)
+            return  # Report will be delivered once analyst approves
+
+    # Direct delivery (Solo tier or no analyst assigned)
+    await _send_report_to_chat(send_text, send_doc, report_text, pdf_path,
+                               restaurant, week_start)
+
+
+async def _send_report_to_chat(send_text, send_doc, report_text, pdf_path,
+                                restaurant, week_start):
+    """Send the (possibly analyst-annotated) report text + PDF to the restaurant chat."""
     for chunk in _split_report_for_telegram(report_text):
         await send_text(chunk)
-
-    # Send PDF
     with open(pdf_path, "rb") as f:
         await send_doc(f, os.path.basename(pdf_path),
                        f"Weekly briefing — {restaurant['name']} ({week_start})")
@@ -314,7 +396,7 @@ async def job_weekly_report(context: ContextTypes.DEFAULT_TYPE):
 
             await _deliver_weekly_report(
                 send_text, send_doc, restaurant, entries, prev_entries,
-                triggered_by_schedule=True,
+                triggered_by_schedule=True, bot=context.bot,
             )
         except Exception as e:
             logger.error(f"Scheduled report failed for {restaurant.get('name')}: {e}")
@@ -387,7 +469,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /today         End-of-day summary\n"
         "  /compare       This week vs last week\n"
         "  /suppliers     Supplier price changes\n"
-        "  /benchmark     vs London industry averages\n\n"
+        "  /benchmark     vs UK industry averages\n"
+        "  /findsupplier  Search UK supplier directory\n"
+        "  /myanalyst     Your dedicated advisor (Managed/Enterprise)\n"
+        "  /flivio        Flivio analytics dashboard\n\n"
         "REPORTS\n"
         "  /weeklyreport  Full briefing + PDF (auto Monday 08:00)\n"
         "  /history       Past reports\n"
@@ -511,7 +596,8 @@ async def cmd_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def send_doc(f, filename, caption):
         await update.message.reply_document(document=f, filename=filename, caption=caption)
 
-    await _deliver_weekly_report(send_text, send_doc, restaurant, entries, prev_entries)
+    await _deliver_weekly_report(send_text, send_doc, restaurant, entries, prev_entries,
+                                 bot=context.bot)
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -886,6 +972,341 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(upgrade_prompt(restaurant))
 
 
+async def cmd_myanalyst(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /myanalyst — show the assigned advisor's details and contact info.
+    Available on Managed and Enterprise tiers.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    if not has_human_advisor(restaurant):
+        await update.message.reply_text(
+            "Your current plan (Solo) is bot-only.\n\n"
+            "Upgrade to Managed or Enterprise to get a dedicated advisor "
+            "who reviews your weekly reports and checks in regularly.\n\n"
+            + upgrade_prompt(restaurant)
+        )
+        return
+
+    analyst = get_analyst_for_restaurant(restaurant["id"])
+    if not analyst:
+        await update.message.reply_text(
+            "Your advisor is being assigned — you'll hear from us within 24 hours.\n\n"
+            "If you've just signed up, welcome! We'll be in touch shortly."
+        )
+        return
+
+    tier = get_tier(restaurant)
+    hours_week = 2 if tier == "managed" else 4
+    hours_used = get_hours_this_week(restaurant["id"], analyst["id"])
+    hours_left = max(0, hours_week - hours_used)
+
+    await update.message.reply_text(
+        f"YOUR ADVISOR — {restaurant['name']}\n"
+        f"{'─' * 34}\n\n"
+        f"Name:    {analyst['name']}\n"
+        f"Email:   {analyst.get('email') or 'Via Telegram'}\n\n"
+        f"Hours included this week:  {hours_week}h\n"
+        f"Hours used this week:      {hours_used:.1f}h\n"
+        f"Hours remaining:           {hours_left:.1f}h\n\n"
+        f"Your advisor reviews every weekly report before it reaches you, "
+        f"adds personal observations, and flags anything that needs attention.\n\n"
+        f"To send them a message, just reply to any report or email directly."
+        + trial_banner(restaurant)
+    )
+
+
+async def cmd_findsupplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /findsupplier [category or name] — search the UK supplier directory.
+    Solo/Managed see top 3 results; Enterprise sees full list with details.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    query = " ".join(context.args).strip() if context.args else ""
+    if not query:
+        await update.message.reply_text(
+            "Usage: /findsupplier [category or name]\n\n"
+            "Examples:\n"
+            "  /findsupplier meat\n"
+            "  /findsupplier fish London\n"
+            "  /findsupplier dairy\n"
+            "  /findsupplier produce nationwide\n\n"
+            "Categories: meat, fish, produce, dairy, dry goods, beverages, packaging"
+        )
+        return
+
+    # Parse optional region from last word if recognised
+    parts  = query.split()
+    region = None
+    known_regions = {"london", "nationwide", "north", "south", "midlands", "scotland", "wales"}
+    if parts[-1].lower() in known_regions:
+        region = parts[-1].lower()
+        query  = " ".join(parts[:-1])
+
+    suppliers = search_suppliers(query, region=region)
+    is_enterprise = has_feature(restaurant, "supplier_db")
+
+    result = format_supplier_results(suppliers, max_show=10 if is_enterprise else 3,
+                                     is_enterprise=is_enterprise)
+
+    await update.message.reply_text(
+        f"SUPPLIER SEARCH — {query.title()}\n"
+        f"{'─' * 34}\n\n"
+        f"{result}"
+        + trial_banner(restaurant)
+    )
+
+
+async def cmd_flivio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /flivio — link to the Flivio analytics dashboard (Managed/Enterprise).
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    if not has_feature(restaurant, "flivio_access"):
+        await update.message.reply_text(
+            "Flivio is included in Managed and Enterprise plans.\n\n"
+            "Flivio gives you rich dashboards — recipe costing, delivery platform "
+            "analysis, and financial forecasting — all linked to your Restaurant-IQ data.\n\n"
+            + upgrade_prompt(restaurant)
+        )
+        return
+
+    flivio_id  = restaurant.get("flivio_restaurant_id")
+    status     = get_integration_status()
+    dash_url   = get_flivio_dashboard_url(flivio_id)
+
+    await update.message.reply_text(
+        f"FLIVIO ANALYTICS — {restaurant['name']}\n"
+        f"{'─' * 34}\n\n"
+        f"Integration: {status}\n\n"
+        f"Dashboard:  {dash_url}\n\n"
+        f"Your weekly entries are automatically exported to Flivio each week. "
+        f"Log in to view recipe costing, delivery analysis, and financial forecasts.\n\n"
+        f"Need help connecting your account? Contact your advisor or email support."
+        + trial_banner(restaurant)
+    )
+
+
+async def cmd_analyst(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /analyst <subcommand> — internal commands for the Restaurant-IQ advisory team.
+
+    Subcommands:
+      clients              List your assigned clients and health scores
+      review               List reports awaiting your approval
+      approve <id>         Approve and deliver a pending report
+      addnote <id> <text>  Add a note to a pending report before approving
+      note <name> <text>   Log an observation for a client (by partial name)
+      hours <name> <h>     Log hours spent on a client this week
+      assign <name> <tid>  Assign yourself (or another analyst) to a client
+      digest               Your weekly client digest
+    """
+    user    = update.effective_user
+    user_id = str(user.id)
+
+    # Only authorised analysts can use this command
+    if user_id not in [str(tid) for tid in ANALYST_TELEGRAM_IDS]:
+        await update.message.reply_text(
+            "This command is for the Restaurant-IQ advisory team only."
+        )
+        return
+
+    analyst = get_analyst_by_telegram_id(user_id)
+    if not analyst:
+        await update.message.reply_text(
+            "You're not registered as an analyst yet.\n"
+            "Ask an admin to add you via the database or contact support."
+        )
+        return
+
+    sub = context.args[0].lower() if context.args else "help"
+    args = context.args[1:] if len(context.args) > 1 else []
+
+    # ── clients ──────────────────────────────────────────────────────────────
+    if sub == "clients":
+        clients = get_clients_for_analyst(analyst["id"])
+        if not clients:
+            await update.message.reply_text("You have no assigned clients yet.")
+            return
+        lines = [f"YOUR CLIENTS ({len(clients)})\n{'─' * 30}"]
+        for c in clients:
+            entries = get_week_entries(c["id"])
+            score, label, _ = client_health_score(c["id"], len(entries),
+                                                   float(c.get("target_food_cost_pct") or 30))
+            lines.append(f"• {c['name']}  [{label} {score}]  entries this week: {len(entries)}")
+        await update.message.reply_text("\n".join(lines))
+
+    # ── review ───────────────────────────────────────────────────────────────
+    elif sub == "review":
+        pending = get_pending_reports_for_analyst(analyst["id"])
+        if not pending:
+            await update.message.reply_text("No reports awaiting your review.")
+            return
+        lines = [f"PENDING REPORTS ({len(pending)})\n{'─' * 30}"]
+        for p in pending:
+            lines.append(
+                f"ID {p['id']} — {p['restaurant_name']}  (week {p['week_start']})\n"
+                f"  /analyst approve {p['id']}\n"
+                f"  /analyst addnote {p['id']} Your note here"
+            )
+        await update.message.reply_text("\n".join(lines))
+
+    # ── addnote <pending_id> <text> ──────────────────────────────────────────
+    elif sub == "addnote":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /analyst addnote <report_id> <your note>")
+            return
+        try:
+            pending_id = int(args[0])
+        except ValueError:
+            await update.message.reply_text("Report ID must be a number.")
+            return
+        note_text = " ".join(args[1:])
+        pending = get_pending_report(pending_id)
+        if not pending:
+            await update.message.reply_text(f"Report {pending_id} not found.")
+            return
+        set_pending_report_note(pending_id, note_text)
+        await update.message.reply_text(
+            f"Note saved for report {pending_id}.\n"
+            f"Approve with: /analyst approve {pending_id}"
+        )
+
+    # ── approve <pending_id> ─────────────────────────────────────────────────
+    elif sub == "approve":
+        if not args:
+            await update.message.reply_text("Usage: /analyst approve <report_id>")
+            return
+        try:
+            pending_id = int(args[0])
+        except ValueError:
+            await update.message.reply_text("Report ID must be a number.")
+            return
+        pending = get_pending_report(pending_id)
+        if not pending:
+            await update.message.reply_text(f"Report {pending_id} not found.")
+            return
+
+        approved = approve_report(pending_id, pending.get("analyst_note") or "")
+
+        # Rebuild final report with analyst note appended
+        final_report = approved["ai_report_text"]
+        if approved.get("analyst_note"):
+            final_report += "\n\n" + format_analyst_note_for_report(
+                approved["analyst_note"], analyst["name"]
+            )
+
+        # Look up the restaurant to get its chat ID
+        rest = get_restaurant_by_id(approved["restaurant_id"])
+        if rest and context.bot:
+            chat_id = rest["telegram_group_id"]
+            week_start = approved["week_start"]
+
+            async def send_t(text, _cid=chat_id):
+                await context.bot.send_message(chat_id=_cid, text=text)
+
+            async def send_d(f, filename, caption, _cid=chat_id):
+                await context.bot.send_document(
+                    chat_id=_cid, document=f, filename=filename, caption=caption
+                )
+
+            for chunk in _split_report_for_telegram(final_report):
+                await send_t(chunk)
+
+            pdf_path = approved.get("pdf_path")
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    await send_d(f, os.path.basename(pdf_path),
+                                 f"Weekly briefing — {rest['name']} ({week_start})")
+
+            await update.message.reply_text(
+                f"Report {pending_id} approved and delivered to {rest['name']}."
+            )
+            log_analyst_hours(rest["id"], analyst["id"], 0.25,
+                              f"Report review & approval — week {week_start}")
+        else:
+            await update.message.reply_text("Could not find restaurant to deliver report.")
+
+    # ── note <partial_name> <text> ────────────────────────────────────────────
+    elif sub == "note":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /analyst note <client_name> <observation>")
+            return
+        name_query = args[0].lower()
+        note_text  = " ".join(args[1:])
+        clients = get_clients_for_analyst(analyst["id"])
+        matched = [c for c in clients if name_query in c["name"].lower()]
+        if not matched:
+            await update.message.reply_text(
+                f"No client matching '{args[0]}' found in your list.\n"
+                "Use /analyst clients to see your full list."
+            )
+            return
+        client = matched[0]
+        add_analyst_note(client["id"], analyst["id"], note_text, note_type="observation")
+        await update.message.reply_text(
+            f"Note logged for {client['name']}:\n\"{note_text}\""
+        )
+
+    # ── hours <partial_name> <hours> ─────────────────────────────────────────
+    elif sub == "hours":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /analyst hours <client_name> <hours_spent>")
+            return
+        name_query = args[0].lower()
+        try:
+            h = float(args[1])
+        except ValueError:
+            await update.message.reply_text("Hours must be a number, e.g. /analyst hours Crown 1.5")
+            return
+        clients = get_clients_for_analyst(analyst["id"])
+        matched = [c for c in clients if name_query in c["name"].lower()]
+        if not matched:
+            await update.message.reply_text(f"No client matching '{args[0]}' found.")
+            return
+        client = matched[0]
+        log_analyst_hours(client["id"], analyst["id"], h, "Manual log")
+        used = get_hours_this_week(client["id"], analyst["id"])
+        await update.message.reply_text(
+            f"Logged {h}h for {client['name']}.\n"
+            f"Total this week: {used:.1f}h"
+        )
+
+    # ── digest ────────────────────────────────────────────────────────────────
+    elif sub == "digest":
+        clients = get_clients_for_analyst(analyst["id"])
+        hours_summary = get_hours_summary_for_analyst(analyst["id"])
+        digest = format_analyst_digest(analyst["id"], clients, hours_summary)
+        await update.message.reply_text(digest)
+
+    else:
+        await update.message.reply_text(
+            "ANALYST COMMANDS\n"
+            "─────────────────────────────\n"
+            "/analyst clients          Your clients + health\n"
+            "/analyst review           Reports awaiting approval\n"
+            "/analyst addnote <id>     Add note to a report\n"
+            "/analyst approve <id>     Approve + deliver report\n"
+            "/analyst note <name> ...  Log client observation\n"
+            "/analyst hours <name> <h> Log hours on a client\n"
+            "/analyst digest           Weekly client digest\n"
+        )
+
+
 # ─── Message handlers ─────────────────────────────────────────────────────────
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1042,6 +1463,10 @@ def main():
     app.add_handler(CommandHandler("export",       cmd_export))
     app.add_handler(CommandHandler("deletedata",   cmd_deletedata))
     app.add_handler(CommandHandler("upgrade",      cmd_upgrade))
+    app.add_handler(CommandHandler("myanalyst",    cmd_myanalyst))
+    app.add_handler(CommandHandler("findsupplier", cmd_findsupplier))
+    app.add_handler(CommandHandler("flivio",       cmd_flivio))
+    app.add_handler(CommandHandler("analyst",      cmd_analyst))
 
     # Messages — voice before text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))

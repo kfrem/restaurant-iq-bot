@@ -4,11 +4,17 @@ database.py — SQLite data layer for Restaurant-IQ.
 All DB access goes through this module. Never call sqlite3 directly from bot.py.
 
 Schema:
-  restaurants     — one row per registered Telegram group
-  staff           — auto-registered members
-  daily_entries   — every message captured (voice/photo/text)
-  weekly_reports  — archived weekly briefings
-  supplier_prices — per-item price history for supplier intelligence
+  restaurants       — one row per registered Telegram group
+  staff             — auto-registered members
+  daily_entries     — every message captured (voice/photo/text)
+  weekly_reports    — archived weekly briefings
+  supplier_prices   — per-item price history for supplier intelligence
+  analysts          — Restaurant-IQ team members who review client data
+  restaurant_analysts — assignment of analyst to restaurant
+  analyst_notes     — internal analyst observations per client
+  analyst_hours_log — hours tracking per client per week
+  pending_reports   — AI reports awaiting analyst review before delivery
+  supplier_directory — curated UK supplier database
 """
 
 import sqlite3
@@ -113,6 +119,91 @@ def init_db():
             ON supplier_prices (restaurant_id, supplier_name, recorded_date)
         """)
 
+        # ── CRM: analyst management ───────────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS analysts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                telegram_id TEXT UNIQUE,
+                email       TEXT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS restaurant_analysts (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                analyst_id    INTEGER NOT NULL,
+                assigned_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(restaurant_id),
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (analyst_id)    REFERENCES analysts(id)
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS analyst_notes (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                analyst_id    INTEGER,
+                note_text     TEXT NOT NULL,
+                note_type     TEXT DEFAULT 'observation',
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (analyst_id)    REFERENCES analysts(id)
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS analyst_hours_log (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                analyst_id    INTEGER,
+                hours_spent   REAL NOT NULL,
+                activity      TEXT,
+                week_start    TEXT NOT NULL,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
+        # ── Human-in-the-loop report workflow ─────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pending_reports (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id   INTEGER NOT NULL,
+                ai_report_text  TEXT NOT NULL,
+                analyst_note    TEXT,
+                pdf_path        TEXT,
+                week_start      TEXT NOT NULL,
+                status          TEXT DEFAULT 'awaiting_review',
+                reviewed_at     TEXT,
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
+        # ── Supplier directory ────────────────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS supplier_directory (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                name          TEXT NOT NULL,
+                categories    TEXT,
+                regions       TEXT,
+                description   TEXT,
+                website       TEXT,
+                min_order_gbp REAL DEFAULT 0,
+                delivery_days TEXT,
+                verified      INTEGER DEFAULT 0,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_supplier_dir_categories
+            ON supplier_directory (categories)
+        """)
+
         # ── Migrations: add new columns to existing DBs safely ────────────────
         _add_column_if_missing(c, "restaurants", "subscription_status",  "TEXT DEFAULT 'trial'")
         _add_column_if_missing(c, "restaurants", "subscription_tier",    "TEXT")
@@ -120,8 +211,14 @@ def init_db():
         _add_column_if_missing(c, "restaurants", "target_food_cost_pct", "REAL DEFAULT 30.0")
         _add_column_if_missing(c, "restaurants", "target_gp_pct",        "REAL DEFAULT 70.0")
         _add_column_if_missing(c, "restaurants", "restaurant_type",      "TEXT DEFAULT 'casual'")
+        _add_column_if_missing(c, "restaurants", "flivio_restaurant_id", "TEXT")
+        _add_column_if_missing(c, "restaurants", "region",               "TEXT DEFAULT 'london'")
 
         conn.commit()
+
+    # Seed supplier directory on first run
+    from supplier_db import seed_suppliers
+    seed_suppliers()
 
     print("Database initialised.")
 
@@ -156,6 +253,13 @@ def get_restaurant_by_group(group_id: str):
         return c.fetchone()
 
 
+def get_restaurant_by_id(restaurant_id: int):
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM restaurants WHERE id = ?", (restaurant_id,))
+        return c.fetchone()
+
+
 def get_all_restaurants() -> list:
     with _db() as conn:
         c = conn.cursor()
@@ -184,13 +288,27 @@ def update_restaurant_targets(restaurant_id: int, food_cost_pct: float = None,
 
 
 def update_subscription(restaurant_id: int, status: str,
-                         tier: str = None, stripe_customer_id: str = None):
+                         tier: str = None, stripe_customer_id: str = None,
+                         flivio_restaurant_id: str = None):
     """Update subscription status after a Stripe webhook event."""
     with _db() as conn:
         c = conn.cursor()
         c.execute(
-            "UPDATE restaurants SET subscription_status=?, subscription_tier=?, stripe_customer_id=? WHERE id=?",
-            (status, tier, stripe_customer_id, restaurant_id),
+            """UPDATE restaurants
+               SET subscription_status=?, subscription_tier=?,
+                   stripe_customer_id=?, flivio_restaurant_id=COALESCE(?, flivio_restaurant_id)
+               WHERE id=?""",
+            (status, tier, stripe_customer_id, flivio_restaurant_id, restaurant_id),
+        )
+        conn.commit()
+
+
+def update_restaurant_region(restaurant_id: int, region: str):
+    """Store the restaurant's UK region for supplier search context."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE restaurants SET region=? WHERE id=?",
+            (region.lower().strip(), restaurant_id),
         )
         conn.commit()
 
