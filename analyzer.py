@@ -4,6 +4,7 @@ AI analysis using local Ollama models.
 - Text entries: gemma3:4b (fast, good enough for structured extraction)
 - Invoice photos: qwen3-vl:30b (vision model, reads images)
 - Weekly reports: qwen3-vl:30b (largest context, best quality narrative)
+- Daily summaries: gemma3:4b (fast, no PDF needed)
 """
 
 import json
@@ -21,6 +22,14 @@ def _extract_json(text: str) -> dict:
     except (ValueError, json.JSONDecodeError):
         return {}
 
+
+def is_ollama_healthy() -> bool:
+    """Return True if Ollama is reachable and responsive."""
+    try:
+        ollama.list()
+        return True
+    except Exception:
+        return False
 
 
 def analyze_text_entry(text: str, restaurant_name: str = "") -> dict:
@@ -199,4 +208,57 @@ Guidelines:
             f"Unable to generate AI report (model error: {e}).\n\n"
             f"Raw data captured this week: {len(entries_data)} entries.\n"
             "Please check that Ollama is running: open a new terminal and run `ollama serve`"
+        )
+
+
+def generate_today_summary(entries_data: list, restaurant_name: str = "") -> str:
+    """
+    Generate a quick end-of-day summary using the fast text model.
+    No PDF — plain text only. Designed for the /today command.
+    """
+    entries_summary = []
+    for e in entries_data:
+        item = {
+            "time": e.get("time"),
+            "type": e.get("type"),
+            "text": e.get("raw_text", "")[:200],
+        }
+        if e.get("analysis"):
+            a = e["analysis"]
+            item["category"] = a.get("category")
+            item["summary"] = a.get("summary")
+            if a.get("urgency"):
+                item["urgency"] = a["urgency"]
+            if a.get("revenue"):
+                item["revenue"] = a["revenue"]
+            if a.get("covers"):
+                item["covers"] = a["covers"]
+        entries_summary.append(item)
+
+    prompt = f"""You are Restaurant-IQ for "{restaurant_name}".
+
+Here are today's staff updates:
+
+{json.dumps(entries_summary, indent=2)}
+
+Write a brief end-of-day summary (max 350 words) covering:
+- Key numbers (revenue and covers if reported)
+- Any high-urgency issues flagged today
+- Notable items (waste, complaints, supplier issues)
+- Top 2 actions for tomorrow
+
+Be concise. Use bullet points. Use £ for currency. No PDF — this is a quick Telegram message."""
+
+    try:
+        response = ollama.chat(
+            model=OLLAMA_TEXT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.2, "num_predict": 500},
+        )
+        return response.message.content.strip()
+    except Exception as e:
+        print(f"Today summary error: {e}")
+        return (
+            f"Could not generate summary (model error: {e}).\n"
+            f"{len(entries_data)} entries captured today. Check Ollama is running."
         )

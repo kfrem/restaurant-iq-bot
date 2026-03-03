@@ -108,6 +108,14 @@ def get_restaurant_by_group(group_id: str):
         return c.fetchone()
 
 
+def get_all_restaurants() -> list:
+    """Return all registered restaurants. Used by the scheduled weekly report job."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM restaurants ORDER BY id")
+        return c.fetchall()
+
+
 def register_staff(restaurant_id: int, telegram_user_id: str, name: str, role: str = "staff"):
     with _db() as conn:
         c = conn.cursor()
@@ -195,3 +203,64 @@ def save_weekly_report(restaurant_id: int, week_start: str, week_end: str, repor
             (restaurant_id, week_start, week_end, report_text),
         )
         conn.commit()
+
+
+def get_weekly_reports(restaurant_id: int, limit: int = 4) -> list:
+    """Return the most recent N weekly reports for a restaurant."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM weekly_reports
+               WHERE restaurant_id = ?
+               ORDER BY week_start DESC
+               LIMIT ?""",
+            (restaurant_id, limit),
+        )
+        return c.fetchall()
+
+
+def get_report_by_week(restaurant_id: int, week_start: str):
+    """Return the weekly report for a specific week_start date (YYYY-MM-DD)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM weekly_reports
+               WHERE restaurant_id = ? AND week_start = ?
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            (restaurant_id, week_start),
+        )
+        return c.fetchone()
+
+
+def delete_old_entries(restaurant_id: int, days: int = 90) -> int:
+    """
+    Delete daily entries older than `days` days for a restaurant.
+    Returns the number of rows deleted.
+    """
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM daily_entries WHERE restaurant_id = ? AND entry_date < ?",
+            (restaurant_id, cutoff),
+        )
+        count = c.rowcount
+        conn.commit()
+    return count
+
+
+def delete_all_entries(restaurant_id: int) -> int:
+    """
+    Delete ALL daily entries for a restaurant (GDPR full erasure).
+    Returns the number of rows deleted.
+    """
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM daily_entries WHERE restaurant_id = ?",
+            (restaurant_id,),
+        )
+        count = c.rowcount
+        conn.commit()
+    return count
