@@ -1,0 +1,25 @@
+# Environment
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# Generated files
+reports/
+voice_files/
+photo_files/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Whisper model cache
+~/.cache/huggingface/
