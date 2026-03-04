@@ -261,6 +261,24 @@ def init_db():
             ON overhead_expenses (restaurant_id, bill_date)
         """)
 
+        # ── No-show / booking cancellation tracker ────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS noshow_log (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id  INTEGER NOT NULL,
+                log_date       TEXT NOT NULL,
+                covers_booked  INTEGER NOT NULL DEFAULT 0,
+                covers_noshow  INTEGER NOT NULL,
+                note           TEXT,
+                created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_noshow_restaurant_date
+            ON noshow_log (restaurant_id, log_date)
+        """)
+
         # ── Migrations: add new columns to existing DBs safely ────────────────
         _add_column_if_missing(c, "restaurants", "subscription_status",   "TEXT DEFAULT 'trial'")
         _add_column_if_missing(c, "restaurants", "subscription_tier",     "TEXT")
@@ -727,45 +745,159 @@ def update_last_review_time(restaurant_id: int, timestamp: int):
 
 # ── Overhead / operating expenses ────────────────────────────────────────────
 
-# Maps the short keyword a user types to (category_group, display_name)
+# Maps the short keyword a user types to (category_group, display_name).
+# If the user types something not in this map, it is stored as category="custom".
 OVERHEAD_KEYWORD_MAP = {
-    "electricity": ("energy",     "Electricity"),
-    "electric":    ("energy",     "Electricity"),
-    "gas":         ("energy",     "Gas"),
-    "oil":         ("energy",     "Heating Oil"),
-    "rent":        ("occupancy",  "Rent"),
-    "rates":       ("occupancy",  "Business Rates"),
-    "insurance":   ("occupancy",  "Insurance"),
-    "water":       ("operations", "Water & Sewerage"),
-    "cleaning":    ("operations", "Cleaning Supplies"),
-    "packaging":   ("operations", "Packaging & Disposables"),
-    "repairs":     ("operations", "Repairs & Maintenance"),
-    "maintenance": ("operations", "Repairs & Maintenance"),
-    "pest":        ("operations", "Pest Control"),
-    "uniforms":    ("operations", "Uniforms & Workwear"),
-    "training":    ("operations", "Staff Training"),
-    "recruitment": ("operations", "Recruitment"),
-    "marketing":   ("marketing",  "Marketing & Advertising"),
-    "advertising": ("marketing",  "Marketing & Advertising"),
-    "deliveroo":   ("marketing",  "Deliveroo Commission"),
-    "ubereats":    ("marketing",  "Uber Eats Commission"),
-    "just_eat":    ("marketing",  "Just Eat Commission"),
-    "justeat":     ("marketing",  "Just Eat Commission"),
-    "delivery":    ("marketing",  "Delivery Platform Fees"),
-    "card_fees":   ("finance",    "Card Processing Fees"),
-    "card":        ("finance",    "Card Processing Fees"),
-    "bank":        ("finance",    "Bank Charges"),
-    "accountant":  ("finance",    "Accountant / Bookkeeper"),
-    "bookkeeper":  ("finance",    "Accountant / Bookkeeper"),
-    "loan":        ("finance",    "Loan Repayments"),
-    "pos":         ("admin",      "POS System"),
-    "reservation": ("admin",      "Reservation Software"),
-    "music":       ("admin",      "Music Licence (PPL/PRS)"),
-    "licence":     ("admin",      "Licences"),
-    "license":     ("admin",      "Licences"),
-    "software":    ("admin",      "Software Subscriptions"),
-    "sundry":      ("admin",      "Sundry / Miscellaneous"),
-    "misc":        ("admin",      "Sundry / Miscellaneous"),
+    # ── ENERGY ──────────────────────────────────────────────────────────────
+    "electricity":         ("energy",      "Electricity"),
+    "electric":            ("energy",      "Electricity"),
+    "gas":                 ("energy",      "Gas"),
+    "oil":                 ("energy",      "Heating Oil"),
+
+    # ── OCCUPANCY ────────────────────────────────────────────────────────────
+    "rent":                ("occupancy",   "Rent"),
+    "rates":               ("occupancy",   "Business Rates"),
+    "insurance":           ("occupancy",   "Insurance"),
+    "business_interruption": ("occupancy", "Business Interruption Insurance"),
+    "bi_insurance":        ("occupancy",   "Business Interruption Insurance"),
+    "product_liability":   ("occupancy",   "Product Liability Insurance"),
+
+    # ── STAFFING (wages tracked separately; these are on-costs) ──────────────
+    "employer_ni":         ("staffing",    "Employer NI Contributions"),
+    "national_insurance":  ("staffing",    "Employer NI Contributions"),
+    "ni":                  ("staffing",    "Employer NI Contributions"),
+    "pension":             ("staffing",    "Pension Contributions"),
+    "auto_enrolment":      ("staffing",    "Pension Contributions"),
+    "staff_meals":         ("staffing",    "Staff Meals"),
+    "crew_food":           ("staffing",    "Staff Meals"),
+    "staff_food":          ("staffing",    "Staff Meals"),
+    "payroll":             ("staffing",    "Payroll Processing"),
+    "payroll_fees":        ("staffing",    "Payroll Processing"),
+    "dbs_checks":          ("staffing",    "DBS Checks"),
+    "dbs":                 ("staffing",    "DBS Checks"),
+    "food_hygiene_cert":   ("staffing",    "Food Hygiene Certification"),
+    "food_safety_cert":    ("staffing",    "Food Hygiene Certification"),
+    "first_aid":           ("staffing",    "First Aid Training"),
+    "tronc":               ("staffing",    "Tronc / Tips Admin"),
+    "tips_admin":          ("staffing",    "Tronc / Tips Admin"),
+    "apprenticeship_levy": ("staffing",    "Apprenticeship Levy"),
+    "recruitment_agency":  ("staffing",    "Recruitment Agency"),
+    "job_boards":          ("staffing",    "Job Board Advertising"),
+    "legal":               ("staffing",    "Legal Fees"),
+
+    # ── COMPLIANCE (legal requirements, inspections, certificates) ────────────
+    "duct_cleaning":       ("compliance",  "Duct / Extraction Cleaning"),
+    "extraction_cleaning": ("compliance",  "Duct / Extraction Cleaning"),
+    "tr19":                ("compliance",  "Duct / Extraction Cleaning"),
+    "grease_trap":         ("compliance",  "Grease Trap Cleaning"),
+    "fire_safety":         ("compliance",  "Fire Safety"),
+    "fire_alarm":          ("compliance",  "Fire Safety"),
+    "extinguisher":        ("compliance",  "Fire Extinguisher Service"),
+    "gas_safety":          ("compliance",  "Gas Safety Certificate"),
+    "gas_cert":            ("compliance",  "Gas Safety Certificate"),
+    "pat_testing":         ("compliance",  "PAT Testing"),
+    "electrical_test":     ("compliance",  "PAT Testing"),
+    "legionella":          ("compliance",  "Legionella / Water Safety"),
+    "water_safety":        ("compliance",  "Legionella / Water Safety"),
+    "premises_licence":    ("compliance",  "Premises Licence"),
+    "alcohol_licence":     ("compliance",  "Premises Licence"),
+
+    # ── OPERATIONS ───────────────────────────────────────────────────────────
+    "water":               ("operations",  "Water & Sewerage"),
+    "cleaning":            ("operations",  "Cleaning Supplies"),
+    "packaging":           ("operations",  "Packaging & Disposables"),
+    "repairs":             ("operations",  "Repairs & Maintenance"),
+    "maintenance":         ("operations",  "Repairs & Maintenance"),
+    "pest":                ("operations",  "Pest Control"),
+    "uniforms":            ("operations",  "Uniforms & Workwear"),
+    "training":            ("operations",  "Staff Training"),
+    "recruitment":         ("operations",  "Recruitment"),
+    "refrigeration":       ("operations",  "Refrigeration Maintenance"),
+    "fridge_maintenance":  ("operations",  "Refrigeration Maintenance"),
+    "coffee_machine":      ("operations",  "Coffee Machine Service"),
+    "coffee_service":      ("operations",  "Coffee Machine Service"),
+    "coffee_lease":        ("operations",  "Coffee Machine Lease"),
+    "ice_machine":         ("operations",  "Ice Machine Maintenance"),
+    "ice_maker":           ("operations",  "Ice Machine Maintenance"),
+    "dishwasher_chemicals":("operations",  "Warewasher Chemicals"),
+    "warewash":            ("operations",  "Warewasher Chemicals"),
+    "glasswasher":         ("operations",  "Warewasher Chemicals"),
+    "waste_collection":    ("operations",  "Commercial Waste Collection"),
+    "commercial_waste":    ("operations",  "Commercial Waste Collection"),
+    "skip_hire":           ("operations",  "Skip Hire"),
+    "bins":                ("operations",  "Commercial Waste Collection"),
+    "laundry":             ("operations",  "Laundry / Linen Hire"),
+    "linen_hire":          ("operations",  "Laundry / Linen Hire"),
+    "linen":               ("operations",  "Laundry / Linen Hire"),
+    "deep_clean":          ("operations",  "Deep Cleaning"),
+    "professional_cleaning":("operations", "Deep Cleaning"),
+    "small_wares":         ("operations",  "Small Wares & Utensils"),
+    "utensils":            ("operations",  "Small Wares & Utensils"),
+    "kitchen_supplies":    ("operations",  "Small Wares & Utensils"),
+    "breakages":           ("operations",  "Breakages"),
+    "crockery":            ("operations",  "Breakages"),
+    "glassware":           ("operations",  "Breakages"),
+    "flowers":             ("operations",  "Décor & Flowers"),
+    "decor":               ("operations",  "Décor & Flowers"),
+    "candles":             ("operations",  "Décor & Flowers"),
+    "printing":            ("operations",  "Printing & Stationery"),
+    "menu_printing":       ("operations",  "Printing & Stationery"),
+    "stationery":          ("operations",  "Printing & Stationery"),
+    "cash_handling":       ("operations",  "Cash Handling"),
+    "cash_collection":     ("operations",  "Cash Handling"),
+    "equipment_hire":      ("operations",  "Equipment Hire"),
+    "catering_hire":       ("operations",  "Equipment Hire"),
+
+    # ── MARKETING ────────────────────────────────────────────────────────────
+    "marketing":           ("marketing",   "Marketing & Advertising"),
+    "advertising":         ("marketing",   "Marketing & Advertising"),
+    "deliveroo":           ("marketing",   "Deliveroo Commission"),
+    "ubereats":            ("marketing",   "Uber Eats Commission"),
+    "just_eat":            ("marketing",   "Just Eat Commission"),
+    "justeat":             ("marketing",   "Just Eat Commission"),
+    "delivery":            ("marketing",   "Delivery Platform Fees"),
+    "opentable":           ("marketing",   "Reservation Platform Fees"),
+    "resy":                ("marketing",   "Reservation Platform Fees"),
+    "designmynight":       ("marketing",   "Reservation Platform Fees"),
+    "sevenrooms":          ("marketing",   "Reservation Platform Fees"),
+    "google_ads":          ("marketing",   "Google Ads"),
+    "paid_search":         ("marketing",   "Paid Digital Advertising"),
+    "facebook_ads":        ("marketing",   "Social Media Advertising"),
+    "instagram_ads":       ("marketing",   "Social Media Advertising"),
+    "social_ads":          ("marketing",   "Social Media Advertising"),
+    "pr":                  ("marketing",   "PR & Press"),
+    "public_relations":    ("marketing",   "PR & Press"),
+    "press":               ("marketing",   "PR & Press"),
+
+    # ── FINANCE ──────────────────────────────────────────────────────────────
+    "card_fees":           ("finance",     "Card Processing Fees"),
+    "card":                ("finance",     "Card Processing Fees"),
+    "bank":                ("finance",     "Bank Charges"),
+    "accountant":          ("finance",     "Accountant / Bookkeeper"),
+    "bookkeeper":          ("finance",     "Accountant / Bookkeeper"),
+    "loan":                ("finance",     "Loan Repayments"),
+    "chargebacks":         ("finance",     "Chargeback Fees"),
+    "chargeback_fees":     ("finance",     "Chargeback Fees"),
+
+    # ── ADMIN ─────────────────────────────────────────────────────────────────
+    "pos":                 ("admin",       "POS System"),
+    "reservation":         ("admin",       "Reservation Software"),
+    "music":               ("admin",       "Music Licence (PPL/PRS)"),
+    "licence":             ("admin",       "Licences"),
+    "license":             ("admin",       "Licences"),
+    "software":            ("admin",       "Software Subscriptions"),
+    "website":             ("admin",       "Website & Domain"),
+    "web_hosting":         ("admin",       "Website & Domain"),
+    "domain":              ("admin",       "Website & Domain"),
+    "cctv":                ("admin",       "CCTV & Security"),
+    "alarm":               ("admin",       "CCTV & Security"),
+    "security_monitoring": ("admin",       "CCTV & Security"),
+    "gift_cards":          ("admin",       "Gift Card Platform"),
+    "gift_vouchers":       ("admin",       "Gift Card Platform"),
+    "loyalty":             ("admin",       "Loyalty Scheme"),
+    "loyalty_scheme":      ("admin",       "Loyalty Scheme"),
+    "sundry":              ("admin",       "Sundry / Miscellaneous"),
+    "misc":                ("admin",       "Sundry / Miscellaneous"),
 }
 
 
@@ -853,4 +985,67 @@ def delete_overhead(overhead_id: int, restaurant_id: int):
             (overhead_id, restaurant_id),
         )
         conn.commit()
+
+
+# ── No-show / booking cancellation tracker ───────────────────────────────────
+
+def log_noshow(restaurant_id: int, covers_noshow: int,
+               covers_booked: int = 0, note: str = None,
+               log_date: str = None) -> int:
+    """Log booking no-shows for a day. Returns the new row ID."""
+    if not log_date:
+        log_date = datetime.now().strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO noshow_log
+               (restaurant_id, log_date, covers_booked, covers_noshow, note)
+               VALUES (?, ?, ?, ?, ?)""",
+            (restaurant_id, log_date, covers_booked, covers_noshow, note),
+        )
         conn.commit()
+        return c.lastrowid
+
+
+def get_noshow_logs(restaurant_id: int, days: int = 90) -> list:
+    """Return no-show log entries for the last N days, most recent first."""
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM noshow_log
+               WHERE restaurant_id = ? AND log_date >= ?
+               ORDER BY log_date DESC""",
+            (restaurant_id, since),
+        )
+        return c.fetchall()
+
+
+def get_noshow_summary(restaurant_id: int, days: int = 90) -> dict:
+    """Return aggregated no-show stats for the last N days."""
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT
+                   COUNT(*) as log_days,
+                   SUM(covers_noshow) as total_noshows,
+                   SUM(covers_booked) as total_booked,
+                   AVG(covers_noshow) as avg_daily_noshows
+               FROM noshow_log
+               WHERE restaurant_id = ? AND log_date >= ?""",
+            (restaurant_id, since),
+        )
+        row = c.fetchone()
+    if not row or not row["total_noshows"]:
+        return {}
+    return {
+        "log_days":          row["log_days"],
+        "total_noshows":     row["total_noshows"] or 0,
+        "total_booked":      row["total_booked"] or 0,
+        "avg_daily_noshows": row["avg_daily_noshows"] or 0,
+        "noshow_rate_pct":   (
+            (row["total_noshows"] / row["total_booked"] * 100)
+            if row["total_booked"] else 0
+        ),
+    }

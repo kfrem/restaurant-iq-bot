@@ -763,21 +763,25 @@ def format_cashflow_forecast(current_balance: float, weekly_revenue: float,
 _OVERHEAD_CATEGORY_LABELS = {
     "energy":     "ENERGY",
     "occupancy":  "OCCUPANCY",
+    "staffing":   "STAFFING ON-COSTS",
+    "compliance": "COMPLIANCE & LEGAL",
     "marketing":  "MARKETING",
     "finance":    "FINANCE",
     "operations": "OPERATIONS",
     "admin":      "ADMIN",
+    "custom":     "CUSTOM / UNCATEGORISED",
 }
 
 # UK benchmark: overhead as % of revenue (excl. food & labour)
-# Energy 3-5%, Occupancy 8-12%, Marketing 2-4%, Finance 1-2%, Operations 2-3%, Admin 1%
 _OVERHEAD_BENCHMARKS = {
-    "energy":     (3.0, 5.0),
-    "occupancy":  (8.0, 12.0),
-    "marketing":  (2.0, 4.0),
-    "finance":    (1.0, 2.5),
-    "operations": (1.5, 3.0),
-    "admin":      (0.5, 1.5),
+    "energy":     (3.0,  5.0),
+    "occupancy":  (8.0,  12.0),
+    "staffing":   (2.0,  4.0),   # NI, pension, staff meals on top of wages
+    "compliance": (0.5,  1.5),
+    "marketing":  (2.0,  4.0),
+    "finance":    (1.0,  2.5),
+    "operations": (1.5,  3.0),
+    "admin":      (0.5,  1.5),
 }
 
 
@@ -828,7 +832,8 @@ def format_overhead_dashboard(summary: dict, revenue: float = 0.0,
     lines.append("")
 
     # Per-category breakdown
-    category_order = ["energy", "occupancy", "marketing", "finance", "operations", "admin"]
+    category_order = ["energy", "occupancy", "staffing", "compliance",
+                      "marketing", "finance", "operations", "admin", "custom"]
     for cat in category_order:
         if cat not in summary:
             continue
@@ -1023,5 +1028,418 @@ def format_energy_dashboard(energy_logs: list, revenue: float = 0.0,
     lines.append("")
     lines.append("For energy saving advice: /energy tips")
     lines.append("Log a bill: /energy electricity 450 2800")
+
+    return "\n".join(lines)
+
+
+# ─── Revenue growth advisor ───────────────────────────────────────────────────
+
+# Revenue growth levers per restaurant type
+# Each entry: (title, detail, weekly_£_potential)
+_GROWTH_PLAYS = {
+    "casual": [
+        ("Upsell starters and desserts",
+         "Train staff to offer starters to every table and desserts to every diner who "
+         "finishes their main. Even 25% conversion on starters at £7 and desserts at £6 "
+         "adds £3.25/head on a 400-cover week.",
+         "£520–800/week"),
+        ("Launch a weekday lunch offer",
+         "Many casual restaurants make 70% of revenue at dinner. A 2-course £18 weekday "
+         "lunch set menu can fill 30–60 extra covers Mon–Fri with pre-prepared food, low "
+         "waste, and predictable staffing.",
+         "£540–1,080/week"),
+        ("Cocktail / pre-dinner drinks moment",
+         "A focused aperitif offer (3–4 options, £9–11 each) offered as guests sit down "
+         "converts at 25–40%. At 400 covers at 30% take-up and £10 average = £1,200/week "
+         "at 70%+ GP — your most profitable sell.",
+         "£400–1,200/week"),
+        ("Private dining and events",
+         "A set-menu private dining event at £45/head minimum spend is pre-sold, low-waste, "
+         "and efficient. Even 2 events/month of 20 guests each = £1,800/month in predictable "
+         "additional revenue with higher GP than a la carte.",
+         "£400–900/week average"),
+        ("Capture emails and drive return visits",
+         "Most restaurants lose 70% of customers after one visit. A simple email capture "
+         "(via reservation system or QR code) and monthly re-engagement email with an offer "
+         "('Book your table, mention this email, get a complimentary dessert') costs pennies "
+         "and drives measurable repeat bookings.",
+         "£200–600/week (repeat trade)"),
+    ],
+    "fine": [
+        ("Introduce sommelier-curated wine pairings",
+         "Wine pairing at £45–70/head on a tasting menu converts at 20–40% when actively "
+         "offered by the sommelier or server. On 200 covers at 30% take-up and £55 pairing "
+         "= £3,300/week at 70%+ GP. The single highest-impact revenue lever for fine dining.",
+         "£1,500–4,000/week"),
+        ("Pre-dinner champagne and cocktail service",
+         "Dedicated bar/lounge seating before dinner. Even a 30-min arrival drink at £15–25 "
+         "per person converted on 60% of covers = £1,800–5,000/week in bar revenue at "
+         "65–70% GP.",
+         "£1,200–3,000/week"),
+        ("Chef's table or counter dining premium",
+         "A 6–8 seat chef's table or kitchen counter experience at a 15–25% premium over "
+         "standard covers (or as a separate experience at £120–200/head inclusive). "
+         "Full pre-payment eliminates no-shows on these seats.",
+         "£720–1,600/week"),
+        ("Weekday tasting menu lunch at accessible price",
+         "A 4-course lunch at £55–70 (vs £95–130 dinner) opens a completely different "
+         "market: corporate lunches, special occasions, food writers. Lunch service typically "
+         "has lower labour cost (prep done for dinner service anyway).",
+         "£1,100–2,800/week"),
+        ("Pre-sold seasonal events (Valentine's, NYE, Christmas)",
+         "Ticket-only events with 100% pre-payment at premium pricing. Valentine's at £120/head "
+         "for 60 covers = £7,200 in one evening. Christmas set menu Nov–Dec can represent "
+         "15–25% of annual revenue. Book out 3–6 months in advance.",
+         "Seasonal windfall — £5,000–20,000 per event"),
+    ],
+    "qsr": [
+        ("Meal deal bundling — add sides and drinks automatically",
+         "QSR research shows bundling increases average spend 20–35% vs individual items. "
+         "'Make it a meal for £2.50 more' at the point of order converts at 40–60%. "
+         "On 800 covers at £12 average and 40% take-up at £2.50 extra = £800/week.",
+         "£400–1,200/week"),
+        ("Digital ordering (kiosk or app)",
+         "Self-service kiosks and app ordering consistently increase average spend by 15–20% "
+         "vs counter ordering — customers add items they would feel embarrassed to request "
+         "from a person. For 800 covers/week at £12, a 15% uplift = £1,440/week.",
+         "£700–2,000/week"),
+        ("Virtual brand on delivery platforms",
+         "Run a second brand from your existing kitchen with a different menu on Uber Eats "
+         "or Deliveroo. Uses spare kitchen capacity during quiet periods. A focused "
+         "virtual brand (e.g., a wings concept or loaded fries concept) can add "
+         "£500–2,000/week with minimal incremental cost.",
+         "£500–2,000/week"),
+        ("Loyalty app — drive return frequency",
+         "QSR loyalty schemes increase visit frequency by 25–40%. A simple stamp-based "
+         "app (every 8th meal free) costs ~£80/month to operate. If you have 200 regular "
+         "customers and loyalty increases their frequency from 2x/month to 2.5x/month, "
+         "that's 100 extra covers/month at £12 = £1,200/month.",
+         "£200–600/week"),
+        ("Breakfast / coffee daypart",
+         "If not already trading at breakfast, a simple breakfast menu (£4–8, coffee + item) "
+         "captures a second daily revenue occasion. Regular breakfast customers spend "
+         "£1,500–3,000/year at one location. 20 regular breakfast covers = £80–160/day "
+         "in additional revenue.",
+         "£400–1,000/week"),
+    ],
+    "cafe": [
+        ("Premium coffee upsell and retail coffee sales",
+         "Train staff to describe coffee origin and flavour profile — premium option "
+         "take-up increases 20–40%. Sell retail bags (250g at £9–14) at the counter. "
+         "On 500 coffee covers, moving 15% to a £1 premium option = £75/day. "
+         "Retail: 20 bags/week at £11 average = £220/week at 60%+ GP.",
+         "£250–700/week"),
+        ("Bottomless brunch (Saturday and Sunday)",
+         "Bottomless brunch at £28–38/head for 90 minutes. Pre-booked, pre-paid. "
+         "Food-led cafes/brunch spots with table licence can fill weekend mornings at "
+         "guaranteed revenue. 30 covers at £32 = £960 per session, 2 sessions/weekend "
+         "= £1,920/weekend.",
+         "£800–2,000/week (weekends only)"),
+        ("Evening trading — wine, cheese and charcuterie",
+         "Most cafes close at 5pm, missing the 5–8pm early-evening opportunity. "
+         "A simple evening offer (wine by glass £6–9, sharing boards £14–18) with "
+         "minimal extra staff can generate £300–800/evening Thu–Sat.",
+         "£300–800/week"),
+        ("Subscription coffee model",
+         "'Coffee Club — £35/month unlimited filter coffee.' Creates guaranteed recurring "
+         "revenue, drives daily return visits, and builds community. At 50 subscribers "
+         "= £1,750/month recurring, mostly margin since filter coffee cost is minimal.",
+         "£400–700/week from subscribers"),
+        ("Remote worker trade (weekday)",
+         "Free WiFi, power sockets, and a quiet environment. Market to local co-working "
+         "communities and businesses. Remote workers stay longer, spend more per hour "
+         "(£8–15 vs £5–8 for a quick visit). A café of 40 seats with 15 regular remote "
+         "workers on weekdays can add £300–600/week.",
+         "£200–500/week"),
+    ],
+    "gastropub": [
+        ("Develop the beer/drinks offer and wet sales %",
+         "Gastropubs should be 45–55% wet sales. If your wet sales are below 35%, you are "
+         "leaving significant GP on the table. Introduce a craft beer rotation, a focused "
+         "cocktail menu (6 options is enough), and a premium wine by the glass range. "
+         "Each 5% increase in wet sales % on £8,000 revenue = £400/week at higher GP.",
+         "£400–1,000/week"),
+        ("Sunday roast — pre-book, pre-sell, maximise",
+         "Sunday is the highest-revenue day for gastropubs. Offer a pre-booked Sunday roast "
+         "with deposits (reduces no-shows). Add a bottomless roast option at £38/head "
+         "(food + unlimited roast potatoes, Yorkshire puddings, gravy, soft drinks). "
+         "A fully booked Sunday at 60 covers = £1,500–2,200.",
+         "£400–800/week uplift"),
+        ("Quiz nights and weekly events",
+         "A quiz night, pub games evening, or music night on a typically quiet Wednesday "
+         "or Thursday can add 30–60 covers at £22+ average spend. Recurring events build "
+         "habit — once a customer comes every Wednesday, they are worth £1,000+/year. "
+         "Cost to host a quiz: £50–150 for a host.",
+         "£600–1,200/week on the event night"),
+        ("Activate outdoor space with heat lamps",
+         "Each additional outdoor cover activated with heat lamps and weather protection "
+         "adds £15–25 per service. 10 extra covers × 2 services/day × 5 months "
+         "= approximately £15,000–25,000 in seasonal additional revenue. "
+         "Heat lamp rental: £50–150/month.",
+         "£300–600/week seasonal"),
+        ("Private hire for functions and events",
+         "Birthday parties, team events, wakes. A room hire fee of £200–500 + minimum F&B "
+         "spend per head. Even 2 private hire bookings per month at £800 average total "
+         "spend = £400/month in highly predictable, high-margin revenue.",
+         "£200–600/week average"),
+    ],
+}
+
+# Cost reduction quick wins per scenario
+_COST_REDUCTION_TIPS = [
+    ("Turn off delivery platforms during your quietest hours",
+     "If 80% of your delivery orders come between 6–10pm, pause your Deliveroo/Uber Eats "
+     "listing at lunchtime. This forces lunch delivery directly through your own website "
+     "(0% commission vs 30%) and doesn't meaningfully reduce volume.\n"
+     "   Saving: £50–200/week depending on volume."),
+    ("Introduce a card-guarantee policy for peak bookings",
+     "No-shows at 10% of bookings cost a 400-cover restaurant £58,000/year in lost revenue. "
+     "A card-guarantee (charge £10/head if no-show with < 24 hours notice) reduces no-shows "
+     "by 50–70%. Reservation systems like Resy and OpenTable support this natively.\n"
+     "   Revenue recovered: £100–600/week."),
+    ("Do a weekly stock-take, not monthly",
+     "A monthly stock-take lets waste, over-portioning and theft run undetected for 4 weeks. "
+     "Switching to weekly catches variances while they are small. 1–2 hours per week for "
+     "a manager at £14/hour = £14–28/week cost vs potentially catching £100–400/week in "
+     "controllable waste earlier.\n"
+     "   Saving: £50–300/week."),
+    ("Negotiate your energy contract via a broker",
+     "When your business energy contract comes up for renewal, use an energy broker "
+     "(Make It Cheaper, Utility Bidder, Bionic) to tender to multiple suppliers. "
+     "Switching supplier at renewal can save 10–25% vs auto-renewing with the incumbent. "
+     "On a £1,500/month energy bill, that is £150–375/month = £1,800–4,500/year.\n"
+     "   Saving: £150–375/month."),
+    ("Train staff to reduce over-portioning with a portion scale",
+     "Over-portioning is invisible theft from your margin. A portion of chicken breast "
+     "supposed to be 180g consistently plated at 220g = 22% food cost inflation on that "
+     "dish. Introduce a portion scale and a one-week weighing exercise on your top 5 "
+     "protein dishes. Typically saves 2–5% on those dishes' food cost.\n"
+     "   Saving: £100–400/week depending on volume."),
+    ("Hire an apprentice instead of a junior on full NMW",
+     "Government apprenticeship co-investment means you pay 5% of the training cost, "
+     "government pays 95%. Apprentice wages start at £6.40/hour vs adult NMW of £11.44+. "
+     "A first-year apprentice commis chef doing 40 hours/week saves £200/week in wages "
+     "vs an adult hire, PLUS free training, PLUS a £1,000 government incentive payment.\n"
+     "   Saving: £150–250/week vs hiring adult staff."),
+    ("Simplify your menu — cut your lowest-selling dishes",
+     "Every menu item you remove reduces: ingredients to stock, prep sheets to run, "
+     "training needed, and waste risk. A menu of 18–22 dishes has 20–30% lower "
+     "food waste as a % of food cost than a 40+ dish menu. Identify the bottom 20% "
+     "of dishes by sales count (log /menu sales weekly) and remove them in the next menu cycle.\n"
+     "   Saving: £50–200/week in reduced waste."),
+    ("Move repeat delivery customers to your own ordering channel",
+     "Every customer who orders directly through your own website/phone costs you 0% "
+     "commission vs 30% on Deliveroo. Add a 'Save 10% when ordering direct' flyer in "
+     "every Deliveroo bag. Even converting 20% of delivery customers to direct saves "
+     "significant commission.\n"
+     "   Saving: £100–400/week depending on delivery volume."),
+]
+
+
+def format_revenue_growth_advisor(kpis: dict, restaurant_type: str,
+                                   overhead_summary: dict = None,
+                                   restaurant_name: str = "") -> str:
+    """
+    Personalised revenue growth and cost reduction advisor.
+    Based on current KPIs vs UK benchmarks, gives specific, quantified actions.
+    """
+    rtype = restaurant_type if restaurant_type in BENCHMARKS else "casual"
+    bench = BENCHMARKS[rtype]
+    type_label = rtype.replace("qsr", "QSR / Fast Food").replace("cafe", "Café").title()
+
+    lines = [f"GROWTH ADVISOR — {restaurant_name}", f"({type_label})", "═" * 40, ""]
+
+    # ── Current snapshot ──────────────────────────────────────────────────────
+    revenue   = kpis.get("revenue", 0)
+    covers    = kpis.get("covers", 0)
+    avg_spend = kpis.get("avg_spend_per_head", 0)
+    food_pct  = kpis.get("food_cost_pct", 0)
+    gp_pct    = kpis.get("gp_pct", 0)
+
+    lines.append("YOUR CURRENT WEEK:")
+
+    if revenue > 0:
+        lines.append(f"  Revenue:      £{revenue:>8,.0f}")
+    else:
+        lines.append("  Revenue:      not logged yet")
+
+    if covers > 0:
+        cover_status = "✅" if covers >= bench["covers_week"] else "⚠️ below benchmark"
+        lines.append(f"  Covers:       {covers:>8}  {cover_status}")
+        lines.append(f"  Benchmark:    {bench['covers_week']:>8}  covers/week ({type_label})")
+    else:
+        lines.append("  Covers:       not logged yet")
+
+    if avg_spend > 0:
+        spend_status = "✅" if avg_spend >= bench["avg_spend"] * 0.95 else "⚠️"
+        lines.append(f"  Avg spend:    £{avg_spend:>7,.2f}  {spend_status} (benchmark: £{bench['avg_spend']})")
+
+    if food_pct > 0:
+        fc_status = "✅" if food_pct <= bench["food_cost_pct"] else "⚠️ above target"
+        lines.append(f"  Food cost:    {food_pct:>7.1f}%  {fc_status} (target: {bench['food_cost_pct']}%)")
+
+    if gp_pct > 0:
+        gp_status = "✅" if gp_pct >= bench["gp_pct"] else "⚠️"
+        lines.append(f"  GP margin:    {gp_pct:>7.1f}%  {gp_status} (target: {bench['gp_pct']}%)")
+
+    # ── Revenue gap ───────────────────────────────────────────────────────────
+    lines.append("")
+    lines.append("─" * 40)
+    if revenue > 0 and covers > 0 and covers < bench["covers_week"]:
+        cover_gap  = bench["covers_week"] - covers
+        revenue_gap = cover_gap * (avg_spend if avg_spend > 0 else bench["avg_spend"])
+        lines.append(f"REVENUE GAP: You are {cover_gap} covers/week below the {type_label}")
+        lines.append(f"benchmark. At your current spend, that represents")
+        lines.append(f"£{revenue_gap:,.0f}/week (£{revenue_gap*52:,.0f}/year) in potential revenue.")
+    elif revenue == 0:
+        lines.append("Log revenue entries daily to unlock your personalised gap analysis.")
+    else:
+        lines.append("Your cover count is at or above the benchmark — focus on")
+        lines.append("increasing average spend and return visit rate.")
+
+    # ── Top revenue opportunities ─────────────────────────────────────────────
+    plays = _GROWTH_PLAYS.get(rtype, _GROWTH_PLAYS["casual"])
+    lines.append("")
+    lines.append("TOP 5 REVENUE OPPORTUNITIES:")
+    lines.append("─" * 40)
+    for i, (title, detail, potential) in enumerate(plays, 1):
+        lines.append(f"{i}. {title.upper()}")
+        lines.append(f"   Potential: {potential}")
+        # Wrap detail at ~55 chars
+        words = detail.split()
+        current_line = "   "
+        for word in words:
+            if len(current_line) + len(word) + 1 > 57:
+                lines.append(current_line)
+                current_line = "   " + word
+            else:
+                current_line = current_line + (" " if current_line != "   " else "") + word
+        if current_line.strip():
+            lines.append(current_line)
+        lines.append("")
+
+    # ── Cost reduction quick wins ─────────────────────────────────────────────
+    lines.append("TOP COST REDUCTION ACTIONS:")
+    lines.append("─" * 40)
+
+    # Prioritise tips based on what they have logged
+    has_delivery = overhead_summary and any(
+        "Commission" in sub or "Platform" in sub
+        for cat in overhead_summary.values()
+        for sub in cat.keys()
+    )
+    tips_to_show = _COST_REDUCTION_TIPS[:5]
+
+    for i, (title, detail) in enumerate(tips_to_show, 1):
+        lines.append(f"{i}. {title.upper()}")
+        for detail_line in detail.split("\n"):
+            words = detail_line.split()
+            current_line = "   "
+            for word in words:
+                if len(current_line) + len(word) + 1 > 57:
+                    lines.append(current_line)
+                    current_line = "   " + word
+                else:
+                    current_line = current_line + (" " if current_line != "   " else "") + word
+            if current_line.strip():
+                lines.append(current_line)
+        lines.append("")
+
+    lines.append("═" * 40)
+    lines.append("Update restaurant type: /targets type casual|fine|qsr|cafe|gastropub")
+    lines.append("Log overheads:          /overhead")
+    lines.append("Track no-shows:         /noshow 3")
+    lines.append("Energy savings:         /energy tips")
+
+    return "\n".join(lines)
+
+
+# ─── No-show / cancellation analysis ─────────────────────────────────────────
+
+def format_noshow_analysis(noshow_logs: list, summary: dict,
+                            avg_spend: float = 0.0,
+                            restaurant_name: str = "") -> str:
+    """
+    Show no-show rate, weekly revenue cost, annual projection, and solutions.
+    """
+    lines = [f"NO-SHOW TRACKER — {restaurant_name}", "─" * 36, ""]
+
+    if not noshow_logs or not summary:
+        lines.append("No no-shows logged yet.")
+        lines.append("")
+        lines.append("Log no-shows to see the revenue impact:")
+        lines.append("  /noshow 3         (3 no-shows today)")
+        lines.append("  /noshow 3 25      (3 no-shows from 25 booked)")
+        lines.append("")
+        lines.append("UK average: 5–15% of booked covers don't show.")
+        lines.append("A 10% no-show rate on 400 covers/week =")
+        lines.append("£58,000/year in lost revenue at £28 avg spend.")
+        return "\n".join(lines)
+
+    total_ns  = summary.get("total_noshows", 0)
+    total_bk  = summary.get("total_booked", 0)
+    ns_rate   = summary.get("noshow_rate_pct", 0)
+    avg_daily = summary.get("avg_daily_noshows", 0)
+    log_days  = summary.get("log_days", 1)
+
+    lines.append(f"Logging period:    {log_days} days logged")
+    lines.append(f"Total no-shows:    {total_ns:.0f} covers")
+    if total_bk > 0:
+        ns_flag = "✅ good" if ns_rate < 5 else ("⚠️ above target" if ns_rate < 10 else "🔴 act now")
+        lines.append(f"Total booked:      {total_bk:.0f} covers")
+        lines.append(f"No-show rate:      {ns_rate:.1f}%  {ns_flag}")
+        lines.append(f"UK benchmark:      5–10% (uncharged bookings)")
+
+    # Revenue impact
+    if avg_spend > 0:
+        weekly_ns     = avg_daily * 7
+        weekly_lost   = weekly_ns * avg_spend
+        annual_lost   = weekly_lost * 52
+        lines.append("")
+        lines.append("REVENUE IMPACT:")
+        lines.append(f"  Avg spend/head:  £{avg_spend:.2f}")
+        lines.append(f"  Est. weekly loss: £{weekly_lost:,.0f}")
+        lines.append(f"  Est. annual loss: £{annual_lost:,.0f}")
+
+        if annual_lost > 5000:
+            lines.append("")
+            lines.append("🔴 This is significant. Action recommended:")
+
+    # Recommendations
+    lines.append("")
+    lines.append("HOW TO FIX THIS:")
+    lines.append("")
+    lines.append("1. CARD GUARANTEE (most effective)")
+    lines.append("   Take card details at booking. Charge £10–15/head")
+    lines.append("   for no-shows with < 24 hours notice. Reduces")
+    lines.append("   no-shows by 50–70%. Use OpenTable, Resy or")
+    lines.append("   ResDiary — all support this natively.")
+    lines.append("")
+    lines.append("2. SMS/EMAIL REMINDER (free, easy)")
+    lines.append("   Automated reminder 48 hours before booking with")
+    lines.append("   a cancellation link. Reduces no-shows by 30–50%")
+    lines.append("   at near-zero cost. Most reservation systems")
+    lines.append("   include this — make sure it's turned on.")
+    lines.append("")
+    lines.append("3. WAITLIST (fills freed tables)")
+    lines.append("   A digital waitlist converts 40–60% of cancellations")
+    lines.append("   into new bookings. Resy and SevenRooms do this well.")
+    lines.append("")
+    lines.append("4. DEPOSIT FOR PEAK DATES")
+    lines.append("   For Christmas, Valentine's, NYE: take 100% pre-")
+    lines.append("   payment. No-shows become zero. The guest has already")
+    lines.append("   paid — it's just a question of whether they show up.")
+    lines.append("")
+
+    # Recent log
+    lines.append("RECENT LOG:")
+    for row in noshow_logs[:8]:
+        bk_str = f"  (from {row['covers_booked']} booked)" if row["covers_booked"] else ""
+        note   = f"  — {row['note']}" if row["note"] else ""
+        lines.append(f"  {row['log_date']}  {row['covers_noshow']} no-shows{bk_str}{note}")
+
+    lines.append("")
+    lines.append("Log: /noshow 3        (3 no-shows today)")
+    lines.append("Log: /noshow 3 25     (3 from 25 booked covers)")
 
     return "\n".join(lines)

@@ -111,6 +111,8 @@ from database import (
     get_energy_logs,
     get_historic_supplier_prices,
     get_menu_items,
+    get_noshow_logs,
+    get_noshow_summary,
     get_or_register_staff,
     get_overhead_summary,
     get_prev_week_entries,
@@ -122,6 +124,7 @@ from database import (
     get_weekly_overhead_estimate,
     get_weekly_reports,
     init_db,
+    log_noshow,
     log_overhead,
     OVERHEAD_KEYWORD_MAP,
     register_restaurant,
@@ -148,8 +151,10 @@ from intelligence import (
     format_kpi_dashboard,
     format_labour_dashboard,
     format_menu_profitability,
+    format_noshow_analysis,
     format_overhead_dashboard,
     format_price_changes,
+    format_revenue_growth_advisor,
     format_supplier_reliability,
     format_vat_summary,
     format_waste_report,
@@ -573,8 +578,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /benchmark     vs UK industry averages\n"
         "  /vat           Quarterly VAT estimate\n"
         "  /cashflow      30-day cash flow forecast\n"
-        "  /overhead      All operating expenses (rent, rates, insurance, etc.)\n"
-        "  /energy        Electricity & gas tracker + saving tips\n\n"
+        "  /overhead      All operating expenses (rent, energy, NI, compliance...)\n"
+        "  /energy        Electricity & gas tracker + energy-saving tips\n"
+        "  /grow          Revenue growth advisor + cost reduction quick wins\n"
+        "  /noshow        Track booking no-shows and lost revenue\n\n"
         "OPERATIONS\n"
         "  /waste         Food waste log & cost\n"
         "  /cashup        Till reconciliation history\n"
@@ -1427,12 +1434,42 @@ async def cmd_overhead(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # First arg is the expense type
     keyword = args[0].lower().strip()
+
+    # Unknown keyword → accept as custom expense with a helpful prompt
     if keyword not in OVERHEAD_KEYWORD_MAP:
-        known = ", ".join(sorted(OVERHEAD_KEYWORD_MAP.keys()))
+        if len(args) < 2:
+            await update.message.reply_text(
+                f"'{keyword}' is not a recognised expense type.\n\n"
+                "Include the amount and we'll log it as a custom expense:\n"
+                f"  /overhead {keyword} 150\n\n"
+                "Or see the full list: /overhead"
+            )
+            return
+        try:
+            amount = float(args[1].replace("£", "").replace(",", ""))
+        except ValueError:
+            await update.message.reply_text("Amount must be a number. Example: /overhead repairs 250")
+            return
+        note_parts = args[2:]
+        note = " ".join(note_parts).strip('"\'') if note_parts else None
+        # Store as custom category so it still appears in dashboard
+        subcategory = keyword.replace("_", " ").title()
+        log_overhead(
+            restaurant_id=restaurant["id"],
+            category="custom",
+            subcategory=subcategory,
+            amount=amount,
+            note=note,
+        )
         await update.message.reply_text(
-            f"Unknown expense type: '{keyword}'\n\n"
-            f"Valid types:\n{known}\n\n"
-            "Example: /overhead electricity 450"
+            f"✅ Logged as custom expense: {subcategory}\n"
+            f"   Amount: £{amount:,.2f}\n\n"
+            "To help us categorise this properly, reply:\n"
+            "  /overhead [type] [amount]\n\n"
+            "Where [type] is one of:\n"
+            "  energy / occupancy / staffing / compliance\n"
+            "  operations / marketing / finance / admin\n\n"
+            "Or view your custom expenses in: /overhead"
         )
         return
 
@@ -1577,6 +1614,123 @@ async def cmd_energy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         restaurant_name=restaurant["name"],
     )
     await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_grow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/grow — Personalised revenue growth and cost reduction advisor.
+
+    Analyses your current KPIs, compares against UK benchmarks for your
+    restaurant type, and gives your top 5 revenue opportunities with
+    estimated £ impact, plus 5 cost reduction quick wins.
+
+    Make sure your restaurant type is set correctly:
+      /targets type casual|fine|qsr|cafe|gastropub
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    kpis         = build_kpis(entries_data)
+    overhead_summary = get_overhead_summary(restaurant["id"], days=30)
+
+    report = format_revenue_growth_advisor(
+        kpis=kpis,
+        restaurant_type=restaurant.get("restaurant_type", "casual"),
+        overhead_summary=overhead_summary,
+        restaurant_name=restaurant["name"],
+    )
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_noshow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/noshow [count] [total_booked] — Track booking no-shows and their revenue cost.
+
+    View no-show analysis:
+      /noshow
+
+    Log no-shows (today):
+      /noshow 3           (3 covers didn't show up)
+      /noshow 3 25        (3 no-shows from 25 booked covers)
+      /noshow 5 40 "Saturday evening"
+
+    The bot will calculate your weekly revenue loss and suggest how to reduce no-shows.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    args = context.args or []
+
+    # No args → show analysis dashboard
+    if not args:
+        logs    = get_noshow_logs(restaurant["id"], days=90)
+        summary = get_noshow_summary(restaurant["id"], days=90)
+        entries      = get_week_entries(restaurant["id"])
+        entries_data = _build_entries_data(entries)
+        kpis         = build_kpis(entries_data)
+        avg_spend    = kpis.get("avg_spend_per_head", 0)
+
+        report = format_noshow_analysis(
+            noshow_logs=logs,
+            summary=summary,
+            avg_spend=avg_spend,
+            restaurant_name=restaurant["name"],
+        )
+        await update.message.reply_text(report + trial_banner(restaurant))
+        return
+
+    # Log no-shows
+    try:
+        covers_noshow = int(args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter the number of no-shows as a whole number.\n"
+            "Example: /noshow 3\n"
+            "Example: /noshow 3 25   (3 from 25 booked)"
+        )
+        return
+
+    covers_booked = 0
+    note_start = 1
+    if len(args) >= 2:
+        try:
+            covers_booked = int(args[1])
+            note_start = 2
+        except ValueError:
+            pass  # second arg is note text, not a number
+
+    note_parts = args[note_start:]
+    note = " ".join(note_parts).strip('"\'') if note_parts else None
+
+    log_noshow(
+        restaurant_id=restaurant["id"],
+        covers_noshow=covers_noshow,
+        covers_booked=covers_booked,
+        note=note,
+    )
+
+    booked_str = f" (from {covers_booked} booked)" if covers_booked else ""
+    # Quick revenue impact hint
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    kpis         = build_kpis(entries_data)
+    avg_spend    = kpis.get("avg_spend_per_head", 0)
+    lost_str = ""
+    if avg_spend > 0 and covers_noshow > 0:
+        lost = covers_noshow * avg_spend
+        lost_str = f"\n   Revenue lost today: £{lost:,.0f}"
+
+    await update.message.reply_text(
+        f"✅ Logged: {covers_noshow} no-show{'s' if covers_noshow != 1 else ''}{booked_str}{lost_str}\n\n"
+        "View no-show analysis: /noshow\n"
+        "Reduce no-shows:  take card deposits at booking"
+    )
 
 
 async def cmd_setplace(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2246,6 +2400,8 @@ def main():
     app.add_handler(CommandHandler("cashflow",     cmd_cashflow))
     app.add_handler(CommandHandler("overhead",     cmd_overhead))
     app.add_handler(CommandHandler("energy",       cmd_energy))
+    app.add_handler(CommandHandler("grow",         cmd_grow))
+    app.add_handler(CommandHandler("noshow",       cmd_noshow))
     app.add_handler(CommandHandler("setplace",     cmd_setplace))
 
     # Messages — voice before text
