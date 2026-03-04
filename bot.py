@@ -1103,6 +1103,16 @@ async def cmd_flivio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Return the sender's Telegram user ID — useful for admin/analyst setup."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"Your Telegram User ID is:\n\n`{user.id}`\n\n"
+        "Copy this number and paste it into your `.env` file as `ADMIN_TELEGRAM_ID`.",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_analyst(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /analyst <subcommand> — internal commands for the Restaurant-IQ advisory team.
@@ -1468,6 +1478,7 @@ def main():
     app.add_handler(CommandHandler("myanalyst",    cmd_myanalyst))
     app.add_handler(CommandHandler("findsupplier", cmd_findsupplier))
     app.add_handler(CommandHandler("flivio",       cmd_flivio))
+    app.add_handler(CommandHandler("myid",         cmd_myid))
     app.add_handler(CommandHandler("analyst",      cmd_analyst))
 
     # Messages — voice before text
