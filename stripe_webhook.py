@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 flask_app = Flask(__name__)
 
+# ── Dashboard ──────────────────────────────────────────────────────────────────
+# Register the interactive dashboard at the server root (/)
+from dashboard import dashboard_bp  # noqa: E402
+flask_app.register_blueprint(dashboard_bp)
+
 
 # ── Stripe event handler ───────────────────────────────────────────────────────
 

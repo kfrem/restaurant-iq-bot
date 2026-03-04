@@ -75,6 +75,53 @@ Key settings to fill in:
 ### How to See Everything You Need to Configure
 - Send `/setup` to your bot — it shows a ✅/❌ checklist of every setting
 
+### The Web Dashboard (Charts & Graphs)
+The bot also runs a **web dashboard** — a beautiful interactive page you can open in any web browser to see all your data as charts.
+
+**How to open it (while the bot is running):**
+1. Make sure the bot is running (see above)
+2. Open your web browser (Chrome, Edge, Firefox — any of them)
+3. In the address bar at the top, type exactly:
+   ```
+   http://localhost:8080/
+   ```
+   and press **Enter**
+4. You will see the dashboard with all your charts
+
+**If you are on a different computer or phone on the same WiFi:**
+- Replace `localhost` with the IP address of the computer running the bot
+- Example: `http://192.168.1.5:8080/`
+- To find your IP: press Windows key, type `cmd`, press Enter, type `ipconfig`, press Enter — look for "IPv4 Address"
+
+**What the dashboard shows:**
+| Chart / Panel | What it tells you |
+|---|---|
+| 6 KPI cards at the top | Revenue, covers, average spend, food cost %, GP%, labour % — all colour-coded green/red vs your benchmark |
+| Revenue & Food Cost chart | Line chart of the last 8 weeks — see trends at a glance |
+| Overhead donut chart | How your costs are split by category. Hover over a segment to see the breakdown |
+| Food Cost % chart | Your food cost over time vs your industry benchmark |
+| Monthly Overhead bar | Six months of overhead spend as a bar chart |
+| Menu Profitability | Every dish with its food cost, selling price, and GP% — green = star dish, red = losing money |
+| No-Show Tracker | How many bookings didn't show up and how much revenue that cost you |
+| Entry Search | Type "salmon" and see every entry mentioning salmon — with dates and £ amounts |
+
+**Change the date range:**
+- Use the **7D / 30D / 90D / 1Y** buttons at the top right to switch between time periods
+- Or use the date picker boxes to pick any start and end date
+- All charts update instantly when you change the date
+
+**To protect the dashboard with a password:**
+1. Open your `.env` file in Notepad
+2. Add a new line: `DASHBOARD_TOKEN=YourPasswordHere`
+3. Save the file and restart the bot
+4. Now the dashboard URL will be: `http://localhost:8080/?token=YourPasswordHere`
+
+**What to add in `.env` for the dashboard:**
+| Setting | What it is | Example |
+|---|---|---|
+| `DASHBOARD_TOKEN` | Password for the web dashboard (optional) | `DASHBOARD_TOKEN=MyPassword123` |
+| `WEBHOOK_PORT` | Which port the server runs on (default: 8080) | `WEBHOOK_PORT=8080` |
+
 ### Installed Bot Commands
 | Command | What it does |
 |---------|-------------|

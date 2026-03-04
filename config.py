@@ -73,6 +73,13 @@ REPORT_TIME = os.getenv("REPORT_TIME", "08:00")
 # Daily flash report time (sent to all active restaurants each evening)
 FLASH_REPORT_TIME = os.getenv("FLASH_REPORT_TIME", "18:00")
 
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+# Optional password for the web dashboard at http://YOUR-SERVER:WEBHOOK_PORT/
+# If set, add ?token=YOUR_TOKEN to the URL to access the dashboard.
+# If left blank, the dashboard is open to anyone on the same network (dev mode).
+# Example: DASHBOARD_TOKEN=MySecretPassword123
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
+
 # ── Admin ─────────────────────────────────────────────────────────────────────
 # Telegram user ID of the platform admin — receives health alerts
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", None)
