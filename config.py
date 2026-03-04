@@ -54,7 +54,16 @@ DB_PATH = os.getenv("DB_PATH", "restaurant_iq.db")
 STRIPE_SECRET_KEY      = os.getenv("STRIPE_SECRET_KEY", None)
 STRIPE_WEBHOOK_SECRET  = os.getenv("STRIPE_WEBHOOK_SECRET", None)
 
-# Public upgrade URL shown to users when trial expires
+# Stripe Price IDs — one per plan (create these in your Stripe dashboard)
+# Stripe Dashboard → Products → Add product → Add price → copy the price_XXXX ID
+STRIPE_SOLO_PRICE_ID       = os.getenv("STRIPE_SOLO_PRICE_ID", None)        # £149/month
+STRIPE_MANAGED_PRICE_ID    = os.getenv("STRIPE_MANAGED_PRICE_ID", None)     # £499/month
+STRIPE_ENTERPRISE_PRICE_ID = os.getenv("STRIPE_ENTERPRISE_PRICE_ID", None)  # £999/month
+
+# Port for the Stripe webhook HTTP server (must be reachable from the internet)
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8080"))
+
+# Public upgrade URL shown to users when trial expires (fallback if Stripe not set up)
 UPGRADE_URL = os.getenv("UPGRADE_URL", "https://restaurantiq.app/upgrade")
 
 # ── Scheduling ────────────────────────────────────────────────────────────────

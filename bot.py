@@ -966,12 +966,40 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show subscription status and upgrade options."""
+    """Show subscription status and upgrade options with real payment links if Stripe is set up."""
     restaurant = await _require_restaurant(update)
     if not restaurant:
         return
 
-    await update.message.reply_text(upgrade_prompt(restaurant))
+    from stripe_payments import stripe_enabled, create_checkout_url
+    from subscription import TIERS
+
+    if not stripe_enabled():
+        # Stripe not configured yet — show the static text prompt
+        await update.message.reply_text(upgrade_prompt(restaurant))
+        return
+
+    # Build a message with real Stripe payment links for each plan
+    owner_id = str(update.effective_user.id)
+    lines = [upgrade_prompt(restaurant), "\n─\n💳 *Choose your plan to pay now:*\n"]
+
+    for tier, info in TIERS.items():
+        try:
+            url = create_checkout_url(tier, restaurant["id"], owner_id)
+            lines.append(
+                f"• [{info['name']} — £{info['price_gbp']}/month]({url})"
+            )
+        except Exception as e:
+            logger.error(f"Stripe checkout error for tier {tier}: {e}")
+            lines.append(f"• {info['name']} — £{info['price_gbp']}/month (payment link unavailable)")
+
+    lines.append("\n_Links expire after 24 hours. Type /upgrade again for a fresh link._")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        disable_web_page_preview=True,
+    )
 
 
 async def cmd_myanalyst(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1581,6 +1609,14 @@ def main():
             "Job queue not available. Install python-telegram-bot[job-queue] "
             "for scheduled reports and health monitoring."
         )
+
+    # Start Stripe webhook server if Stripe is configured
+    from stripe_payments import stripe_enabled
+    if stripe_enabled():
+        from stripe_webhook import start_webhook_server
+        start_webhook_server()
+    else:
+        logger.info("Stripe not configured — webhook server not started. Set STRIPE_SECRET_KEY to enable payments.")
 
     logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)
