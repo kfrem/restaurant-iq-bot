@@ -304,6 +304,7 @@ async def _deliver_weekly_report(send_text, send_doc, restaurant, entries,
         entries_data, restaurant["name"],
         kpi_context=kpi_context,
         supplier_alert_context=supplier_context if price_changes else "",
+        tier=get_tier(restaurant),
     )
 
     week_start, week_end = _week_bounds()
@@ -672,7 +673,8 @@ async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prev_kpis    = build_kpis(prev_data)
 
     comparison = generate_comparison_report(
-        entries_data, prev_data, current_kpis, prev_kpis, restaurant["name"]
+        entries_data, prev_data, current_kpis, prev_kpis, restaurant["name"],
+        tier=get_tier(restaurant),
     )
 
     week_start, _ = _week_bounds()

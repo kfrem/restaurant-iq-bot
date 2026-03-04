@@ -1,8 +1,16 @@
 python-telegram-bot[job-queue]==22.6
 faster-whisper==1.2.1
-anthropic>=0.40.0
-ollama==0.6.1
 Pillow==12.1.1
 reportlab==4.4.10
 python-dotenv==1.2.2
 stripe>=8.0.0
+
+# ── AI backends — install whichever you use (all are optional) ────────────────
+# Free tier — get key at console.groq.com (no credit card):
+groq>=0.9.0
+# Free tier — get key at aistudio.google.com (no credit card):
+google-generativeai>=0.8.0
+# Paid — Enterprise tier only (console.anthropic.com):
+anthropic>=0.40.0
+# Local / self-hosted fallback:
+ollama==0.6.1

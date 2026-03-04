@@ -8,12 +8,36 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_token_here":
     raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env — add your token from @BotFather")
 
-# ── AI Backend — Claude API (recommended) or Ollama (self-hosted fallback) ───
-# If ANTHROPIC_API_KEY is set, Claude API is used automatically.
-# Claude Haiku costs ~$0.002/restaurant/month — no GPU server needed.
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", None)
+# ── AI Backend — multi-backend with automatic fallback ────────────────────────
+#
+# Priority order (cheapest first):
+#   1. Groq         — free tier (30 RPM, llama-3.3-70b) — text only, very fast
+#   2. Google Gemini— free tier (15 RPM, Flash)          — text + vision
+#   3. Ollama       — local / self-hosted                 — text + vision
+#   4. Anthropic    — paid (Enterprise tier only)         — text + vision
+#
+# Subscription-tier model routing:
+#   Solo / Trial  → Groq (text) + Gemini Flash (vision/reports)  ← FREE
+#   Managed       → Gemini 1.5 Pro reports + Gemini Flash analysis
+#   Enterprise    → Claude Sonnet reports + Claude Haiku analysis
+#
+# Set any combination of keys below — unused backends are silently skipped.
 
-# Ollama fallback settings (used only when ANTHROPIC_API_KEY is not set)
+# ── Groq (free tier: console.groq.com/keys — no credit card) ─────────────────
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# ── Google Gemini (free tier: aistudio.google.com — no credit card) ──────────
+GOOGLE_API_KEY      = os.getenv("GOOGLE_API_KEY", "")
+GEMINI_FAST_MODEL   = os.getenv("GEMINI_FAST_MODEL", "gemini-1.5-flash")   # free
+GEMINI_SMART_MODEL  = os.getenv("GEMINI_SMART_MODEL", "gemini-1.5-pro")    # cheap paid
+
+# ── Anthropic Claude (Enterprise tier — console.anthropic.com) ───────────────
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_FAST_MODEL  = os.getenv("CLAUDE_FAST_MODEL",  "claude-haiku-4-5-20251001")
+CLAUDE_SMART_MODEL = os.getenv("CLAUDE_SMART_MODEL", "claude-sonnet-4-6")
+
+# ── Ollama (local / self-hosted fallback) ─────────────────────────────────────
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "qwen3-vl:30b")
 OLLAMA_TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "gemma3:4b")
 OLLAMA_HOST       = os.getenv("OLLAMA_HOST", "http://localhost:11434")
