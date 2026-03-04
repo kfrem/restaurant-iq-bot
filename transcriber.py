@@ -6,15 +6,15 @@ Set WHISPER_LANGUAGE in .env to force a specific language (e.g. "en", "es", "fr"
 Leave unset (default) to enable automatic language detection.
 """
 
-from faster_whisper import WhisperModel
 from config import WHISPER_MODEL_SIZE, WHISPER_LANGUAGE
 
 _model = None
 
 
-def _get_model() -> WhisperModel:
+def _get_model():
     global _model
     if _model is None:
+        from faster_whisper import WhisperModel  # imported lazily to avoid slow startup
         print(f"Loading Whisper '{WHISPER_MODEL_SIZE}' model (first time only)...")
         _model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
         print("Whisper model ready.")
