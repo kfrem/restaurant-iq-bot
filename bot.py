@@ -98,11 +98,18 @@ from flivio_bridge import (
     get_integration_status,
 )
 from database import (
+    add_compliance_item,
+    complete_compliance_item,
     delete_all_entries,
+    delete_compliance_item,
+    delete_menu_item,
     delete_old_entries,
     get_all_restaurants,
+    get_compliance_items,
+    get_compliance_items_due_soon,
     get_entries_for_period,
     get_historic_supplier_prices,
+    get_menu_items,
     get_or_register_staff,
     get_prev_week_entries,
     get_report_by_week,
@@ -117,15 +124,27 @@ from database import (
     save_entry,
     save_supplier_prices,
     save_weekly_report,
+    set_google_place_id,
+    update_known_balance,
+    update_last_review_time,
     update_restaurant_targets,
+    upsert_menu_item,
 )
 from intelligence import (
     build_kpis,
     detect_price_changes,
     extract_supplier_prices,
+    format_allergen_log,
     format_benchmark_comparison,
+    format_cash_reconciliation,
+    format_cashflow_forecast,
     format_kpi_dashboard,
+    format_labour_dashboard,
+    format_menu_profitability,
     format_price_changes,
+    format_supplier_reliability,
+    format_vat_summary,
+    format_waste_report,
 )
 from report_generator import generate_pdf_report
 from subscription import (
@@ -432,6 +451,79 @@ async def job_flash_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Flash report failed for {restaurant.get('name')}: {e}")
 
 
+async def job_compliance_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Daily job: send Telegram alerts for compliance items due within 30 days."""
+    items = get_compliance_items_due_soon(days=30)
+    sent: dict = {}  # group_id → list of messages (avoid spamming same chat)
+
+    for item in items:
+        group_id = item["telegram_group_id"]
+        due      = item["due_date"]
+        days     = (datetime.fromisoformat(due) - datetime.now()).days
+
+        if days < 0:
+            icon = f"🔴 OVERDUE by {abs(days)} days"
+        elif days == 0:
+            icon = "🔴 DUE TODAY"
+        elif days <= 7:
+            icon = f"🔴 Due in {days} day{'s' if days != 1 else ''}"
+        elif days <= 14:
+            icon = f"⚠️  Due in {days} days"
+        else:
+            icon = f"📋 Due in {days} days"
+
+        sent.setdefault(group_id, []).append(
+            f"{icon}: {item['item_name']}  ({due})"
+        )
+
+    for group_id, messages in sent.items():
+        try:
+            await context.bot.send_message(
+                chat_id=group_id,
+                text=(
+                    "COMPLIANCE REMINDER\n"
+                    "─" * 28 + "\n\n"
+                    + "\n".join(messages)
+                    + "\n\nView all: /compliance"
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Compliance reminder failed for {group_id}: {e}")
+
+
+async def job_review_monitor(context: ContextTypes.DEFAULT_TYPE):
+    """Hourly job: check each restaurant's Google listing for new negative reviews."""
+    from google_reviews import get_new_reviews, format_review_alert, places_api_enabled
+    if not places_api_enabled():
+        return
+
+    for restaurant in get_all_restaurants():
+        if not is_active(restaurant):
+            continue
+        place_id = restaurant.get("google_place_id")
+        if not place_id:
+            continue
+
+        since = int(restaurant.get("last_review_time") or 0)
+        try:
+            new_reviews = get_new_reviews(place_id, since_timestamp=since)
+            if not new_reviews:
+                continue
+
+            # Update the timestamp to the newest review we've seen
+            newest_ts = max(r.get("time", 0) for r in new_reviews)
+            update_last_review_time(restaurant["id"], newest_ts)
+
+            for review in new_reviews:
+                alert = format_review_alert(review, restaurant["name"])
+                await context.bot.send_message(
+                    chat_id=restaurant["telegram_group_id"],
+                    text=alert,
+                )
+        except Exception as e:
+            logger.error(f"Review monitor failed for {restaurant.get('name')}: {e}")
+
+
 async def job_ai_health(context: ContextTypes.DEFAULT_TYPE):
     """Periodic health check — alert admin if AI backend goes offline."""
     if not is_healthy():
@@ -465,19 +557,32 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  🎙️ Voice note  → shift observation, issues, revenue\n"
         "  📸 Photo       → invoice or receipt\n"
         "  ✏️ Text        → any quick update\n\n"
-        "INTELLIGENCE\n"
+        "FINANCIAL INTELLIGENCE\n"
         "  /metrics       KPI dashboard (food cost, covers, GP)\n"
+        "  /labour        Wage bill & labour cost %\n"
         "  /today         End-of-day summary\n"
         "  /compare       This week vs last week\n"
-        "  /suppliers     Supplier price changes\n"
         "  /benchmark     vs UK industry averages\n"
-        "  /findsupplier  Search UK supplier directory\n"
-        "  /myanalyst     Your dedicated advisor (Managed/Enterprise)\n"
-        "  /flivio        Flivio analytics dashboard\n\n"
+        "  /vat           Quarterly VAT estimate\n"
+        "  /cashflow      30-day cash flow forecast\n\n"
+        "OPERATIONS\n"
+        "  /waste         Food waste log & cost\n"
+        "  /cashup        Till reconciliation history\n"
+        "  /allergens     Allergen incident log\n"
+        "  /reliability   Supplier delivery reliability\n"
+        "  /suppliers     Supplier price changes\n"
+        "  /compliance    Equipment & certificate tracker\n"
+        "  /menu          Menu profitability (4-box)\n\n"
+        "REVIEWS\n"
+        "  /setplace      Link your Google listing for review alerts\n\n"
         "REPORTS\n"
         "  /weeklyreport  Full briefing + PDF (auto Monday 08:00)\n"
         "  /history       Past reports\n"
         "  /export        Week's data as CSV\n\n"
+        "ADVISOR\n"
+        "  /findsupplier  Search UK supplier directory\n"
+        "  /myanalyst     Your dedicated advisor (Managed/Enterprise)\n"
+        "  /flivio        Flivio analytics dashboard\n\n"
         "SETTINGS\n"
         "  /targets       Set food cost %, restaurant type\n"
         "  /status        Subscription + entry summary\n"
@@ -962,6 +1067,354 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{count} entries older than 90 days deleted from {restaurant['name']}.\n"
             "This keeps you GDPR-compliant (90-day rolling retention).\n\n"
             "Use /deletedata all to erase everything."
+        )
+
+
+async def cmd_labour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/labour — wage bill and labour cost % for the current week."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    entries      = get_week_entries(restaurant["id"])
+    prev_entries = get_prev_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    prev_data    = _build_entries_data(prev_entries) if prev_entries else None
+    current_kpis = build_kpis(entries_data)
+    prev_kpis    = build_kpis(prev_data) if prev_data else None
+
+    target_labour = float(restaurant.get("target_labour_pct") or 30.0)
+    dashboard = format_labour_dashboard(
+        current_kpis, prev_kpis, restaurant["name"], target_labour
+    )
+    await update.message.reply_text(dashboard + trial_banner(restaurant))
+
+
+async def cmd_waste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/waste — food waste log and weekly total cost."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    report = format_waste_report(entries_data, restaurant["name"])
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_cashup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/cashup — till reconciliation history for the current week."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    report = format_cash_reconciliation(entries_data, restaurant["name"])
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/allergens — allergen incident log for the current week."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    report = format_allergen_log(entries_data, restaurant["name"])
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_reliability(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/reliability — supplier delivery reliability over the last 30 days."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    # Pull 30 days of entries for reliability context
+    today      = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    entries      = get_entries_for_period(restaurant["id"], start_date, today)
+    entries_data = _build_entries_data(entries)
+    report = format_supplier_reliability(entries_data, restaurant["name"])
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_compliance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/compliance — equipment and certificate tracker.
+
+    Subcommands:
+      (no args)              Show upcoming items
+      add <name> <YYYY-MM-DD> [notes]   Add a new item
+      done <id>              Mark an item as completed
+      delete <id>            Remove an item
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    args = context.args or []
+    sub  = args[0].lower() if args else "list"
+
+    if sub == "add":
+        if len(args) < 3:
+            await update.message.reply_text(
+                "Usage: /compliance add \"Item Name\" YYYY-MM-DD\n\n"
+                "Examples:\n"
+                "  /compliance add Gas Safety Certificate 2026-09-15\n"
+                "  /compliance add Deep Clean Due 2026-04-01\n"
+                "  /compliance add Fire Extinguisher Service 2026-06-20"
+            )
+            return
+        # Last arg before any notes is the date, everything before is the name
+        date_str  = args[-1]
+        item_name = " ".join(args[1:-1])
+        try:
+            from datetime import date
+            date.fromisoformat(date_str)
+        except ValueError:
+            await update.message.reply_text(
+                f"Date format must be YYYY-MM-DD, e.g. 2026-09-15\n"
+                f"You entered: {date_str}"
+            )
+            return
+        item_id = add_compliance_item(restaurant["id"], item_name, date_str)
+        await update.message.reply_text(
+            f"✅ Added: {item_name}\n"
+            f"Due: {date_str}\n"
+            f"Item ID: {item_id} (use /compliance done {item_id} when complete)"
+        )
+
+    elif sub == "done":
+        if len(args) < 2 or not args[1].isdigit():
+            await update.message.reply_text("Usage: /compliance done <id>\nExample: /compliance done 3")
+            return
+        complete_compliance_item(int(args[1]))
+        await update.message.reply_text(f"✅ Item #{args[1]} marked as complete.")
+
+    elif sub == "delete":
+        if len(args) < 2 or not args[1].isdigit():
+            await update.message.reply_text("Usage: /compliance delete <id>\nExample: /compliance delete 3")
+            return
+        delete_compliance_item(int(args[1]))
+        await update.message.reply_text(f"Deleted item #{args[1]}.")
+
+    else:
+        items = get_compliance_items(restaurant["id"])
+        lines = [f"COMPLIANCE TRACKER — {restaurant['name']}", "─" * 36, ""]
+
+        if not items:
+            lines.append("No compliance items added yet.")
+            lines.append("")
+            lines.append("Add items with:")
+            lines.append("  /compliance add Gas Safety Certificate 2026-09-15")
+            lines.append("  /compliance add Deep Clean Due 2026-04-01")
+        else:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            for item in items:
+                due   = item["due_date"]
+                days  = (datetime.fromisoformat(due) - datetime.now()).days
+                if days < 0:
+                    icon = "🔴 OVERDUE"
+                elif days <= 7:
+                    icon = f"🔴 Due in {days}d"
+                elif days <= 30:
+                    icon = f"⚠️  Due in {days}d"
+                else:
+                    icon = f"✅  Due in {days}d"
+                lines.append(f"{icon}  [{item['id']}] {item['item_name']}  ({due})")
+                if item.get("notes"):
+                    lines.append(f"       Note: {item['notes']}")
+
+        lines.append("")
+        lines.append("Commands: /compliance add <name> <date>  |  done <id>  |  delete <id>")
+        await update.message.reply_text("\n".join(lines) + trial_banner(restaurant))
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/menu — menu profitability (4-box matrix).
+
+    Subcommands:
+      (no args)                             Show profitability analysis
+      add <dish name> <food cost> <price>   Add / update a dish
+      remove <dish name>                    Remove a dish
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    args = context.args or []
+    sub  = args[0].lower() if args else "list"
+
+    if sub == "add":
+        if len(args) < 4:
+            await update.message.reply_text(
+                "Usage: /menu add <dish name> <food cost £> <selling price £>\n\n"
+                "Examples:\n"
+                "  /menu add Fish and Chips 4.20 14.50\n"
+                "  /menu add Burger 3.80 13.00\n"
+                "  /menu add Caesar Salad 2.10 9.50\n\n"
+                "Food cost = what it costs you to make the dish.\n"
+                "Selling price = what you charge the customer."
+            )
+            return
+        try:
+            selling_price = float(args[-1])
+            food_cost     = float(args[-2])
+            dish_name     = " ".join(args[1:-2])
+        except ValueError:
+            await update.message.reply_text(
+                "Prices must be numbers.\n"
+                "Example: /menu add Fish and Chips 4.20 14.50"
+            )
+            return
+        if not dish_name:
+            await update.message.reply_text("Please include a dish name.")
+            return
+        upsert_menu_item(restaurant["id"], dish_name, food_cost, selling_price)
+        fc_pct = (food_cost / selling_price) * 100
+        gp_pct = 100 - fc_pct
+        await update.message.reply_text(
+            f"✅ {dish_name} saved\n"
+            f"Food cost: £{food_cost:.2f}  ({fc_pct:.0f}%)\n"
+            f"Selling:   £{selling_price:.2f}\n"
+            f"GP:        {gp_pct:.0f}%  {'✅' if fc_pct < 33 else '⚠️'}"
+        )
+
+    elif sub == "remove":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /menu remove <dish name>\nExample: /menu remove Caesar Salad")
+            return
+        dish_name = " ".join(args[1:])
+        delete_menu_item(restaurant["id"], dish_name)
+        await update.message.reply_text(f"Removed: {dish_name}")
+
+    else:
+        items  = get_menu_items(restaurant["id"])
+        report = format_menu_profitability(items, restaurant["name"])
+        await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_vat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/vat — quarterly VAT estimate from captured revenue and cost data."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    # Use last 90 days (roughly a quarter) of entries
+    today      = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    entries      = get_entries_for_period(restaurant["id"], start_date, today)
+    entries_data = _build_entries_data(entries)
+
+    report = format_vat_summary(entries_data, restaurant["name"], "last 90 days")
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_cashflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/cashflow [balance] — 30-day cash flow forecast.
+    Usage: /cashflow 8400  (set current bank balance and see forecast)
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    # If user provided a balance, store it
+    if context.args:
+        try:
+            balance = float(context.args[0].replace("£", "").replace(",", ""))
+            update_known_balance(restaurant["id"], balance)
+        except ValueError:
+            await update.message.reply_text(
+                "Please enter your current bank balance as a number.\n"
+                "Example: /cashflow 8400"
+            )
+            return
+    else:
+        balance = restaurant.get("last_known_balance")
+
+    # Get this week's averages to project forward
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    kpis         = build_kpis(entries_data)
+
+    report = format_cashflow_forecast(
+        current_balance=balance,
+        weekly_revenue=kpis.get("revenue", 0),
+        weekly_food_cost=kpis.get("food_cost", 0),
+        weekly_labour=kpis.get("labour_cost", 0),
+        restaurant_name=restaurant["name"],
+    )
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_setplace(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setplace <Google Place ID> — link your Google Maps listing for review alerts."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not _is_owner(update, restaurant):
+        await update.message.reply_text("Only the restaurant owner can set the Google Place ID.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /setplace <Google Place ID>\n\n"
+            "How to find your Place ID:\n"
+            "1. Go to Google Maps\n"
+            "2. Search for your restaurant\n"
+            "3. Click your listing → Share → copy the link\n"
+            "4. The Place ID looks like: ChIJN1t_tDeuEmsRUsoyG83frY4\n\n"
+            "Or visit: https://developers.google.com/maps/documentation/places/web-service/place-id"
+        )
+        return
+
+    from google_reviews import places_api_enabled
+    place_id = context.args[0].strip()
+    set_google_place_id(restaurant["id"], place_id)
+
+    if not places_api_enabled():
+        await update.message.reply_text(
+            f"Place ID saved: {place_id}\n\n"
+            "⚠️ GOOGLE_API_KEY is not set, so review alerts won't work yet.\n"
+            "Add your free Google API key in .env to enable review monitoring."
+        )
+        return
+
+    # Test the Place ID works
+    from google_reviews import get_recent_reviews
+    reviews = get_recent_reviews(place_id)
+    if reviews:
+        rating = reviews[0].get("rating", "?")
+        await update.message.reply_text(
+            f"✅ Google listing linked!\n\n"
+            f"Found {len(reviews)} recent review(s). Most recent rating: {rating}⭐\n\n"
+            f"You'll now receive instant alerts whenever a new review is posted."
+        )
+    else:
+        await update.message.reply_text(
+            f"Place ID saved. No reviews found yet (or the Place ID may be incorrect).\n"
+            f"Place ID: {place_id}\n\n"
+            f"If this is wrong, run /setplace again with the correct ID."
         )
 
 
@@ -1569,6 +2022,17 @@ def main():
     app.add_handler(CommandHandler("myid",         cmd_myid))
     app.add_handler(CommandHandler("setup",        cmd_setup))
     app.add_handler(CommandHandler("analyst",      cmd_analyst))
+    # New feature commands
+    app.add_handler(CommandHandler("labour",       cmd_labour))
+    app.add_handler(CommandHandler("waste",        cmd_waste))
+    app.add_handler(CommandHandler("cashup",       cmd_cashup))
+    app.add_handler(CommandHandler("allergens",    cmd_allergens))
+    app.add_handler(CommandHandler("reliability",  cmd_reliability))
+    app.add_handler(CommandHandler("compliance",   cmd_compliance))
+    app.add_handler(CommandHandler("menu",         cmd_menu))
+    app.add_handler(CommandHandler("vat",          cmd_vat))
+    app.add_handler(CommandHandler("cashflow",     cmd_cashflow))
+    app.add_handler(CommandHandler("setplace",     cmd_setplace))
 
     # Messages — voice before text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
@@ -1604,6 +2068,23 @@ def main():
             logger.info(f"Daily flash report scheduled: {FLASH_REPORT_TIME}")
         except Exception as e:
             logger.error(f"Failed to schedule flash report: {e}")
+
+        # Daily compliance reminders at 09:00
+        app.job_queue.run_daily(
+            job_compliance_reminders,
+            time=dtime(hour=9, minute=0),
+            name="compliance_reminders",
+        )
+        logger.info("Daily compliance reminders scheduled: 09:00")
+
+        # Hourly Google review monitor
+        app.job_queue.run_repeating(
+            job_review_monitor,
+            interval=3600,
+            first=120,  # First check 2 minutes after startup
+            name="review_monitor",
+        )
+        logger.info("Google review monitor scheduled: every hour")
     else:
         logger.warning(
             "Job queue not available. Install python-telegram-bot[job-queue] "

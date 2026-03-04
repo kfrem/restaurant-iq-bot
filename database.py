@@ -204,15 +204,54 @@ def init_db():
             ON supplier_directory (categories)
         """)
 
+        # ── Compliance / equipment tracker ────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS compliance_items (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                item_name     TEXT NOT NULL,
+                due_date      TEXT NOT NULL,
+                notes         TEXT,
+                completed     INTEGER DEFAULT 0,
+                completed_at  TEXT,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_compliance_restaurant
+            ON compliance_items (restaurant_id, due_date)
+        """)
+
+        # ── Menu profitability tracker ────────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS menu_items (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                dish_name     TEXT NOT NULL,
+                food_cost     REAL,
+                selling_price REAL,
+                is_active     INTEGER DEFAULT 1,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(restaurant_id, dish_name),
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
         # ── Migrations: add new columns to existing DBs safely ────────────────
-        _add_column_if_missing(c, "restaurants", "subscription_status",  "TEXT DEFAULT 'trial'")
-        _add_column_if_missing(c, "restaurants", "subscription_tier",    "TEXT")
-        _add_column_if_missing(c, "restaurants", "stripe_customer_id",   "TEXT")
-        _add_column_if_missing(c, "restaurants", "target_food_cost_pct", "REAL DEFAULT 30.0")
-        _add_column_if_missing(c, "restaurants", "target_gp_pct",        "REAL DEFAULT 70.0")
-        _add_column_if_missing(c, "restaurants", "restaurant_type",      "TEXT DEFAULT 'casual'")
-        _add_column_if_missing(c, "restaurants", "flivio_restaurant_id", "TEXT")
-        _add_column_if_missing(c, "restaurants", "region",               "TEXT DEFAULT 'london'")
+        _add_column_if_missing(c, "restaurants", "subscription_status",   "TEXT DEFAULT 'trial'")
+        _add_column_if_missing(c, "restaurants", "subscription_tier",     "TEXT")
+        _add_column_if_missing(c, "restaurants", "stripe_customer_id",    "TEXT")
+        _add_column_if_missing(c, "restaurants", "target_food_cost_pct",  "REAL DEFAULT 30.0")
+        _add_column_if_missing(c, "restaurants", "target_gp_pct",         "REAL DEFAULT 70.0")
+        _add_column_if_missing(c, "restaurants", "restaurant_type",       "TEXT DEFAULT 'casual'")
+        _add_column_if_missing(c, "restaurants", "flivio_restaurant_id",  "TEXT")
+        _add_column_if_missing(c, "restaurants", "region",                "TEXT DEFAULT 'london'")
+        _add_column_if_missing(c, "restaurants", "target_labour_pct",     "REAL DEFAULT 30.0")
+        _add_column_if_missing(c, "restaurants", "google_place_id",       "TEXT")
+        _add_column_if_missing(c, "restaurants", "last_review_time",      "INTEGER DEFAULT 0")
+        _add_column_if_missing(c, "restaurants", "last_known_balance",    "REAL")
+        _add_column_if_missing(c, "restaurants", "last_balance_date",     "TEXT")
 
         conn.commit()
 
@@ -526,3 +565,139 @@ def get_historic_supplier_prices(restaurant_id: int,
             "unit":       row["unit"] or "",
         }
     return prices
+
+
+# ── Compliance / equipment tracker ───────────────────────────────────────────
+
+def add_compliance_item(restaurant_id: int, item_name: str, due_date: str,
+                        notes: str = None) -> int:
+    """Add a compliance or equipment item with a due date. Returns the new row ID."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO compliance_items (restaurant_id, item_name, due_date, notes) VALUES (?, ?, ?, ?)",
+            (restaurant_id, item_name, due_date, notes),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_compliance_items(restaurant_id: int, include_completed: bool = False) -> list:
+    """Return compliance items sorted by due date (soonest first)."""
+    with _db() as conn:
+        c = conn.cursor()
+        if include_completed:
+            c.execute(
+                "SELECT * FROM compliance_items WHERE restaurant_id = ? ORDER BY due_date ASC",
+                (restaurant_id,),
+            )
+        else:
+            c.execute(
+                "SELECT * FROM compliance_items WHERE restaurant_id = ? AND completed = 0 ORDER BY due_date ASC",
+                (restaurant_id,),
+            )
+        return c.fetchall()
+
+
+def complete_compliance_item(item_id: int):
+    """Mark a compliance item as done."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE compliance_items SET completed = 1, completed_at = ? WHERE id = ?",
+            (datetime.now().strftime("%Y-%m-%d"), item_id),
+        )
+        conn.commit()
+
+
+def delete_compliance_item(item_id: int):
+    with _db() as conn:
+        conn.execute("DELETE FROM compliance_items WHERE id = ?", (item_id,))
+        conn.commit()
+
+
+def get_compliance_items_due_soon(days: int = 30) -> list:
+    """Return all compliance items across all restaurants due within N days (for reminders)."""
+    cutoff = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    today  = datetime.now().strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT ci.*, r.name AS restaurant_name, r.telegram_group_id, r.owner_telegram_id
+               FROM compliance_items ci
+               JOIN restaurants r ON r.id = ci.restaurant_id
+               WHERE ci.completed = 0 AND ci.due_date <= ?
+               ORDER BY ci.due_date ASC""",
+            (cutoff,),
+        )
+        return c.fetchall()
+
+
+# ── Menu profitability tracker ────────────────────────────────────────────────
+
+def upsert_menu_item(restaurant_id: int, dish_name: str,
+                     food_cost: float, selling_price: float) -> int:
+    """Add or update a menu item. Returns the row ID."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO menu_items (restaurant_id, dish_name, food_cost, selling_price)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(restaurant_id, dish_name)
+               DO UPDATE SET food_cost=excluded.food_cost, selling_price=excluded.selling_price,
+                             is_active=1""",
+            (restaurant_id, dish_name, food_cost, selling_price),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_menu_items(restaurant_id: int) -> list:
+    """Return all active menu items for a restaurant."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT * FROM menu_items WHERE restaurant_id = ? AND is_active = 1 ORDER BY dish_name",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def delete_menu_item(restaurant_id: int, dish_name: str):
+    with _db() as conn:
+        conn.execute(
+            "UPDATE menu_items SET is_active = 0 WHERE restaurant_id = ? AND dish_name = ?",
+            (restaurant_id, dish_name),
+        )
+        conn.commit()
+
+
+# ── Cash balance tracking ─────────────────────────────────────────────────────
+
+def update_known_balance(restaurant_id: int, balance: float):
+    """Store the owner's most recently entered bank balance."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE restaurants SET last_known_balance = ?, last_balance_date = ? WHERE id = ?",
+            (balance, datetime.now().strftime("%Y-%m-%d"), restaurant_id),
+        )
+        conn.commit()
+
+
+# ── Google Places / review tracking ──────────────────────────────────────────
+
+def set_google_place_id(restaurant_id: int, place_id: str):
+    with _db() as conn:
+        conn.execute(
+            "UPDATE restaurants SET google_place_id = ? WHERE id = ?",
+            (place_id, restaurant_id),
+        )
+        conn.commit()
+
+
+def update_last_review_time(restaurant_id: int, timestamp: int):
+    with _db() as conn:
+        conn.execute(
+            "UPDATE restaurants SET last_review_time = ? WHERE id = ?",
+            (timestamp, restaurant_id),
+        )
+        conn.commit()

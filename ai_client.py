@@ -338,14 +338,34 @@ Update: "{text}"
 
 Return exactly this JSON:
 {{
-  "category": "revenue|cost|staff|waste|maintenance|customer|general",
+  "category": "revenue|cost|staff|waste|labour|cash|allergen|delivery_issue|maintenance|customer|general",
   "summary": "one sentence summary",
   "urgency": "high|medium|low",
   "revenue": <number or null>,
   "covers": <integer or null>,
+  "avg_spend": <number per head or null>,
   "waste_cost": <number or null>,
+  "labour_cost": <total wages/payroll amount or null>,
+  "cash_expected": <expected till total or null>,
+  "cash_actual": <actual till count or null>,
+  "allergen_name": "allergen type mentioned or null",
+  "allergen_dish": "dish name involved or null",
+  "supplier_name": "supplier name if delivery issue or null",
+  "delivery_issue": "description of delivery problem or null",
   "action_needed": "specific action or null"
-}}"""
+}}
+
+Category guide:
+- revenue: sales figures, covers, takings, daily revenue
+- cost: food purchases, invoices, supplier receipts
+- staff: staffing levels, no-shows, performance issues
+- waste: food thrown away, spoilage, over-production
+- labour: wages, payroll, staff hours, wage bill
+- cash: till count, cash reconciliation, float check
+- allergen: allergen query from customer, incident, near-miss
+- delivery_issue: missing items, short delivery, quality issue, late supplier
+- maintenance: equipment fault, repair needed, compliance item
+- customer: complaint, feedback, compliment, review"""
     try:
         raw = _fast_text(prompt, _JSON_SYSTEM, json_mode=True)
         return _extract_json(raw)
@@ -418,13 +438,16 @@ def generate_weekly_report(entries: list, restaurant_name: str,
 
 Write a comprehensive weekly briefing with these sections:
 ## Executive Summary
-## Financial Performance
+## Financial Performance (revenue, covers, avg spend, food cost %, GP)
+## Labour & Wage Analysis (wage bill, labour %, payroll notes)
+## Waste & Cash (waste costs logged, till reconciliation variances)
+## Allergen & Compliance (any allergen incidents, compliance items flagged)
+## Supplier Intelligence (delivery issues, price changes, reliability)
 ## Operational Highlights
-## Staff & Service
-## Supplier & Cost Intelligence
 ## Priorities for Next Week
 
-Be specific, use numbers from the data, flag risks clearly."""
+Be specific, use numbers from the data, flag risks clearly.
+Only include sections where data exists — skip empty sections."""
     try:
         return _smart_report(prompt, _REPORT_SYSTEM, tier=tier)
     except Exception as e:
