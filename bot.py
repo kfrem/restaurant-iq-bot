@@ -1113,6 +1113,66 @@ async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all Telegram info for this bot and a .env configuration checklist."""
+    import os
+    from config import (
+        GROQ_API_KEY, GOOGLE_API_KEY, ANTHROPIC_API_KEY,
+        STRIPE_SECRET_KEY, FLIVIO_API_URL,
+    )
+
+    user = update.effective_user
+    bot_user = await context.bot.get_me()
+
+    def tick(val):
+        return "✅" if val else "❌"
+
+    token_set   = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "your_telegram_bot_token_here")
+    admin_set   = bool(ADMIN_TELEGRAM_ID)
+    groq_set    = bool(GROQ_API_KEY)
+    google_set  = bool(GOOGLE_API_KEY)
+    claude_set  = bool(ANTHROPIC_API_KEY)
+    stripe_set  = bool(STRIPE_SECRET_KEY)
+    flivio_set  = bool(FLIVIO_API_URL)
+
+    lines = [
+        "🤖 *Restaurant-IQ Bot — Setup Checklist*",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "📋 *YOUR TELEGRAM INFO*",
+        f"  Your User ID:  `{user.id}`",
+        f"  Your Username: @{user.username or 'not set'}",
+        f"  Bot Username:  @{bot_user.username}",
+        f"  Bot ID:        `{bot_user.id}`",
+        "",
+        "🔑 *REQUIRED*",
+        f"  {tick(token_set)} TELEGRAM\\_BOT\\_TOKEN",
+        f"      → Get from @BotFather → /mybots → API Token",
+        f"  {tick(admin_set)} ADMIN\\_TELEGRAM\\_ID",
+        f"      → Your User ID above: `{user.id}`",
+        "",
+        "🤖 *FREE AI BACKENDS (pick at least one)*",
+        f"  {tick(groq_set)} GROQ\\_API\\_KEY",
+        f"      → console.groq.com/keys  (free, no card)",
+        f"  {tick(google_set)} GOOGLE\\_API\\_KEY",
+        f"      → aistudio.google.com/apikey  (free, no card)",
+        "",
+        "💳 *PAID / OPTIONAL*",
+        f"  {tick(claude_set)} ANTHROPIC\\_API\\_KEY  (Enterprise tier only)",
+        f"  {tick(stripe_set)} STRIPE\\_SECRET\\_KEY  (needed for billing)",
+        f"  {tick(flivio_set)} FLIVIO\\_API\\_URL     (dashboard integration)",
+        "",
+        "📝 *NEXT STEPS*",
+        "  1. Open your `.env` file",
+        "  2. Fill in any ❌ items above",
+        "  3. Restart the bot",
+        "",
+        "Run /myid at any time to re-check your User ID.",
+    ]
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def cmd_analyst(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /analyst <subcommand> — internal commands for the Restaurant-IQ advisory team.
@@ -1479,6 +1539,7 @@ def main():
     app.add_handler(CommandHandler("findsupplier", cmd_findsupplier))
     app.add_handler(CommandHandler("flivio",       cmd_flivio))
     app.add_handler(CommandHandler("myid",         cmd_myid))
+    app.add_handler(CommandHandler("setup",        cmd_setup))
     app.add_handler(CommandHandler("analyst",      cmd_analyst))
 
     # Messages — voice before text
