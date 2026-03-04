@@ -86,6 +86,9 @@ Key settings to fill in:
 | `/metrics` | KPI dashboard |
 | `/today` | Today's summary |
 | `/weeklyreport` | Weekly financial report |
+| `/overhead` | Log and view all operating expenses (rent, rates, insurance, packaging, etc.) |
+| `/energy` | Track electricity & gas bills + get energy-saving tips |
+| `/cashflow` | 30-day cash flow forecast — now includes overheads |
 
 ---
 

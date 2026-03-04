@@ -108,17 +108,22 @@ from database import (
     get_compliance_items,
     get_compliance_items_due_soon,
     get_entries_for_period,
+    get_energy_logs,
     get_historic_supplier_prices,
     get_menu_items,
     get_or_register_staff,
+    get_overhead_summary,
     get_prev_week_entries,
     get_report_by_week,
     get_restaurant_by_group,
     get_restaurant_by_id,
     get_supplier_prices,
     get_week_entries,
+    get_weekly_overhead_estimate,
     get_weekly_reports,
     init_db,
+    log_overhead,
+    OVERHEAD_KEYWORD_MAP,
     register_restaurant,
     register_staff,
     save_entry,
@@ -133,14 +138,17 @@ from database import (
 from intelligence import (
     build_kpis,
     detect_price_changes,
+    ENERGY_SAVING_TIPS,
     extract_supplier_prices,
     format_allergen_log,
     format_benchmark_comparison,
     format_cash_reconciliation,
     format_cashflow_forecast,
+    format_energy_dashboard,
     format_kpi_dashboard,
     format_labour_dashboard,
     format_menu_profitability,
+    format_overhead_dashboard,
     format_price_changes,
     format_supplier_reliability,
     format_vat_summary,
@@ -564,7 +572,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /compare       This week vs last week\n"
         "  /benchmark     vs UK industry averages\n"
         "  /vat           Quarterly VAT estimate\n"
-        "  /cashflow      30-day cash flow forecast\n\n"
+        "  /cashflow      30-day cash flow forecast\n"
+        "  /overhead      All operating expenses (rent, rates, insurance, etc.)\n"
+        "  /energy        Electricity & gas tracker + saving tips\n\n"
         "OPERATIONS\n"
         "  /waste         Food waste log & cost\n"
         "  /cashup        Till reconciliation history\n"
@@ -1329,7 +1339,7 @@ async def cmd_vat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_cashflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/cashflow [balance] — 30-day cash flow forecast.
+    """/cashflow [balance] — 30-day cash flow forecast including all overheads.
     Usage: /cashflow 8400  (set current bank balance and see forecast)
     """
     restaurant = await _require_restaurant(update)
@@ -1352,16 +1362,218 @@ async def cmd_cashflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         balance = restaurant.get("last_known_balance")
 
-    # Get this week's averages to project forward
+    # Get this week's KPIs + overhead estimate
     entries      = get_week_entries(restaurant["id"])
     entries_data = _build_entries_data(entries)
     kpis         = build_kpis(entries_data)
+    weekly_oh    = get_weekly_overhead_estimate(restaurant["id"])
 
     report = format_cashflow_forecast(
         current_balance=balance,
         weekly_revenue=kpis.get("revenue", 0),
         weekly_food_cost=kpis.get("food_cost", 0),
         weekly_labour=kpis.get("labour_cost", 0),
+        weekly_overheads=weekly_oh,
+        restaurant_name=restaurant["name"],
+    )
+    await update.message.reply_text(report + trial_banner(restaurant))
+
+
+async def cmd_overhead(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/overhead [type] [amount] [note] — Log or view operating expenses.
+
+    View dashboard:
+      /overhead
+
+    Log an expense:
+      /overhead electricity 450
+      /overhead electricity 450 2800 kWh  (with units)
+      /overhead rent 3200
+      /overhead deliveroo 480 "March commission"
+
+    Categories you can use:
+      electricity, gas, oil
+      rent, rates, insurance
+      water, cleaning, packaging, repairs, uniforms, pest
+      deliveroo, ubereats, just_eat, marketing
+      card_fees, bank, accountant, loan
+      pos, music, licence, software
+      sundry, misc
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    args = context.args or []
+
+    # No args → show dashboard
+    if not args:
+        summary      = get_overhead_summary(restaurant["id"], days=30)
+        entries      = get_week_entries(restaurant["id"])
+        entries_data = _build_entries_data(entries)
+        kpis         = build_kpis(entries_data)
+        report = format_overhead_dashboard(
+            summary=summary,
+            revenue=kpis.get("revenue", 0),
+            food_cost=kpis.get("food_cost", 0),
+            labour_cost=kpis.get("labour_cost", 0),
+            restaurant_name=restaurant["name"],
+            period_days=30,
+        )
+        await update.message.reply_text(report + trial_banner(restaurant))
+        return
+
+    # First arg is the expense type
+    keyword = args[0].lower().strip()
+    if keyword not in OVERHEAD_KEYWORD_MAP:
+        known = ", ".join(sorted(OVERHEAD_KEYWORD_MAP.keys()))
+        await update.message.reply_text(
+            f"Unknown expense type: '{keyword}'\n\n"
+            f"Valid types:\n{known}\n\n"
+            "Example: /overhead electricity 450"
+        )
+        return
+
+    if len(args) < 2:
+        await update.message.reply_text(
+            f"Please include the amount.\n"
+            f"Example: /overhead {keyword} 450"
+        )
+        return
+
+    try:
+        amount = float(args[1].replace("£", "").replace(",", ""))
+    except ValueError:
+        await update.message.reply_text(
+            f"Amount must be a number. Example: /overhead {keyword} 450"
+        )
+        return
+
+    category, subcategory = OVERHEAD_KEYWORD_MAP[keyword]
+
+    # Optional: units (e.g. kWh or m³) as 3rd numeric arg
+    units = None
+    unit_type = None
+    note_parts = args[2:]
+    if note_parts:
+        try:
+            units = float(note_parts[0].replace(",", ""))
+            if category == "energy":
+                unit_type = "kWh" if "Electr" in subcategory else "m³"
+            note_parts = note_parts[1:]
+        except ValueError:
+            pass  # not a number — treat as note text
+
+    note = " ".join(note_parts).strip('"\'') if note_parts else None
+
+    log_overhead(
+        restaurant_id=restaurant["id"],
+        category=category,
+        subcategory=subcategory,
+        amount=amount,
+        note=note,
+        units=units,
+        unit_type=unit_type,
+    )
+
+    units_str = f"  ({units:,.0f} {unit_type})" if units and unit_type else ""
+    note_str  = f"\n📝 Note: {note}" if note else ""
+    await update.message.reply_text(
+        f"✅ Logged: {subcategory}\n"
+        f"   Amount: £{amount:,.2f}{units_str}{note_str}\n\n"
+        f"View all overheads: /overhead\n"
+        f"See cashflow impact: /cashflow"
+    )
+
+
+async def cmd_energy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/energy — Track electricity and gas bills, monitor costs, get saving tips.
+
+    View energy dashboard:
+      /energy
+
+    Log a bill (amount only):
+      /energy electricity 450
+      /energy gas 380
+
+    Log a bill with usage (amount + units):
+      /energy electricity 450 2800   (£450 bill, 2800 kWh)
+      /energy gas 380 1200           (£380 bill, 1200 m³)
+
+    Get energy saving advice:
+      /energy tips
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+    if not await _require_active(update, restaurant):
+        return
+
+    args = context.args or []
+
+    # /energy tips — show the saving advice
+    if args and args[0].lower() in ("tips", "advice", "help", "save", "saving"):
+        await update.message.reply_text(ENERGY_SAVING_TIPS)
+        return
+
+    # /energy electricity/gas [amount] [units] — log a bill
+    energy_keywords = {"electricity", "electric", "gas", "oil"}
+    if args and args[0].lower() in energy_keywords:
+        keyword = args[0].lower()
+        if len(args) < 2:
+            sub = "electricity" if "electr" in keyword else keyword
+            await update.message.reply_text(
+                f"Please include the bill amount.\n"
+                f"Example: /energy {sub} 450\n"
+                f"With usage: /energy {sub} 450 2800"
+            )
+            return
+        try:
+            amount = float(args[1].replace("£", "").replace(",", ""))
+        except ValueError:
+            await update.message.reply_text("Amount must be a number. Example: /energy electricity 450")
+            return
+
+        category, subcategory = OVERHEAD_KEYWORD_MAP[keyword]
+        units = None
+        unit_type = None
+        if len(args) >= 3:
+            try:
+                units = float(args[2].replace(",", ""))
+                unit_type = "kWh" if "Electr" in subcategory else "m³"
+            except ValueError:
+                pass
+
+        log_overhead(
+            restaurant_id=restaurant["id"],
+            category=category,
+            subcategory=subcategory,
+            amount=amount,
+            units=units,
+            unit_type=unit_type,
+        )
+
+        units_str = f"  ({units:,.0f} {unit_type})" if units and unit_type else ""
+        tip = "\n\n💡 Tip: /energy tips for ways to reduce this bill." if amount > 300 else ""
+        await update.message.reply_text(
+            f"✅ Logged: {subcategory} bill\n"
+            f"   Amount: £{amount:,.2f}{units_str}{tip}\n\n"
+            f"See all energy data: /energy\n"
+            f"See cashflow impact: /cashflow"
+        )
+        return
+
+    # No args or unrecognised → show dashboard
+    energy_logs = get_energy_logs(restaurant["id"], limit=12)
+    entries      = get_week_entries(restaurant["id"])
+    entries_data = _build_entries_data(entries)
+    kpis         = build_kpis(entries_data)
+
+    report = format_energy_dashboard(
+        energy_logs=energy_logs,
+        revenue=kpis.get("revenue", 0),
         restaurant_name=restaurant["name"],
     )
     await update.message.reply_text(report + trial_banner(restaurant))
@@ -2032,6 +2244,8 @@ def main():
     app.add_handler(CommandHandler("menu",         cmd_menu))
     app.add_handler(CommandHandler("vat",          cmd_vat))
     app.add_handler(CommandHandler("cashflow",     cmd_cashflow))
+    app.add_handler(CommandHandler("overhead",     cmd_overhead))
+    app.add_handler(CommandHandler("energy",       cmd_energy))
     app.add_handler(CommandHandler("setplace",     cmd_setplace))
 
     # Messages — voice before text

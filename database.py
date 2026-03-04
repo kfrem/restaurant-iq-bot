@@ -15,6 +15,7 @@ Schema:
   analyst_hours_log — hours tracking per client per week
   pending_reports   — AI reports awaiting analyst review before delivery
   supplier_directory — curated UK supplier database
+  overhead_expenses — all fixed and variable overheads (energy, rent, etc.)
 """
 
 import sqlite3
@@ -236,6 +237,28 @@ def init_db():
                 UNIQUE(restaurant_id, dish_name),
                 FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
             )
+        """)
+
+        # ── Overhead / operating expenses tracker ────────────────────────────
+        # Covers energy, rent, rates, insurance, marketing, finance, admin, etc.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS overhead_expenses (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                category      TEXT NOT NULL,
+                subcategory   TEXT NOT NULL,
+                amount        REAL NOT NULL,
+                units         REAL,
+                unit_type     TEXT,
+                note          TEXT,
+                bill_date     TEXT NOT NULL,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_overhead_restaurant_date
+            ON overhead_expenses (restaurant_id, bill_date)
         """)
 
         # ── Migrations: add new columns to existing DBs safely ────────────────
@@ -700,4 +723,134 @@ def update_last_review_time(restaurant_id: int, timestamp: int):
             "UPDATE restaurants SET last_review_time = ? WHERE id = ?",
             (timestamp, restaurant_id),
         )
+
+
+# ── Overhead / operating expenses ────────────────────────────────────────────
+
+# Maps the short keyword a user types to (category_group, display_name)
+OVERHEAD_KEYWORD_MAP = {
+    "electricity": ("energy",     "Electricity"),
+    "electric":    ("energy",     "Electricity"),
+    "gas":         ("energy",     "Gas"),
+    "oil":         ("energy",     "Heating Oil"),
+    "rent":        ("occupancy",  "Rent"),
+    "rates":       ("occupancy",  "Business Rates"),
+    "insurance":   ("occupancy",  "Insurance"),
+    "water":       ("operations", "Water & Sewerage"),
+    "cleaning":    ("operations", "Cleaning Supplies"),
+    "packaging":   ("operations", "Packaging & Disposables"),
+    "repairs":     ("operations", "Repairs & Maintenance"),
+    "maintenance": ("operations", "Repairs & Maintenance"),
+    "pest":        ("operations", "Pest Control"),
+    "uniforms":    ("operations", "Uniforms & Workwear"),
+    "training":    ("operations", "Staff Training"),
+    "recruitment": ("operations", "Recruitment"),
+    "marketing":   ("marketing",  "Marketing & Advertising"),
+    "advertising": ("marketing",  "Marketing & Advertising"),
+    "deliveroo":   ("marketing",  "Deliveroo Commission"),
+    "ubereats":    ("marketing",  "Uber Eats Commission"),
+    "just_eat":    ("marketing",  "Just Eat Commission"),
+    "justeat":     ("marketing",  "Just Eat Commission"),
+    "delivery":    ("marketing",  "Delivery Platform Fees"),
+    "card_fees":   ("finance",    "Card Processing Fees"),
+    "card":        ("finance",    "Card Processing Fees"),
+    "bank":        ("finance",    "Bank Charges"),
+    "accountant":  ("finance",    "Accountant / Bookkeeper"),
+    "bookkeeper":  ("finance",    "Accountant / Bookkeeper"),
+    "loan":        ("finance",    "Loan Repayments"),
+    "pos":         ("admin",      "POS System"),
+    "reservation": ("admin",      "Reservation Software"),
+    "music":       ("admin",      "Music Licence (PPL/PRS)"),
+    "licence":     ("admin",      "Licences"),
+    "license":     ("admin",      "Licences"),
+    "software":    ("admin",      "Software Subscriptions"),
+    "sundry":      ("admin",      "Sundry / Miscellaneous"),
+    "misc":        ("admin",      "Sundry / Miscellaneous"),
+}
+
+
+def log_overhead(restaurant_id: int, category: str, subcategory: str,
+                 amount: float, note: str = None,
+                 bill_date: str = None,
+                 units: float = None, unit_type: str = None) -> int:
+    """Log an overhead/operating expense. Returns the new row ID."""
+    if not bill_date:
+        bill_date = datetime.now().strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO overhead_expenses
+               (restaurant_id, category, subcategory, amount, units, unit_type, note, bill_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, category, subcategory, amount, units, unit_type, note, bill_date),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_overhead_summary(restaurant_id: int, days: int = 30) -> dict:
+    """
+    Return overhead totals grouped by category and subcategory.
+    Returns: {category: {subcategory: {"total": float, "entries": int}}}
+    """
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT category, subcategory, SUM(amount) as total, COUNT(*) as entries
+               FROM overhead_expenses
+               WHERE restaurant_id = ? AND bill_date >= ?
+               GROUP BY category, subcategory
+               ORDER BY category, subcategory""",
+            (restaurant_id, since),
+        )
+        rows = c.fetchall()
+
+    summary: dict = {}
+    for row in rows:
+        cat = row["category"]
+        sub = row["subcategory"]
+        summary.setdefault(cat, {})[sub] = {
+            "total":   row["total"],
+            "entries": row["entries"],
+        }
+    return summary
+
+
+def get_energy_logs(restaurant_id: int, limit: int = 12) -> list:
+    """Return the most recent energy expense entries (electricity + gas)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM overhead_expenses
+               WHERE restaurant_id = ? AND category = 'energy'
+               ORDER BY bill_date DESC LIMIT ?""",
+            (restaurant_id, limit),
+        )
+        return c.fetchall()
+
+
+def get_weekly_overhead_estimate(restaurant_id: int) -> float:
+    """Estimate a weekly overhead figure from the last 90 days of data (excl. food/labour)."""
+    total = 0.0
+    since = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT SUM(amount) as total FROM overhead_expenses WHERE restaurant_id = ? AND bill_date >= ?",
+            (restaurant_id, since),
+        )
+        row = c.fetchone()
+        if row and row["total"]:
+            total = row["total"] / (90 / 7)   # convert 90-day total to weekly average
+    return total
+
+
+def delete_overhead(overhead_id: int, restaurant_id: int):
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM overhead_expenses WHERE id = ? AND restaurant_id = ?",
+            (overhead_id, restaurant_id),
+        )
+        conn.commit()
         conn.commit()

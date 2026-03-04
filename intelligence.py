@@ -701,26 +701,37 @@ def format_vat_summary(entries: list, restaurant_name: str = "",
 
 def format_cashflow_forecast(current_balance: float, weekly_revenue: float,
                               weekly_food_cost: float, weekly_labour: float,
+                              weekly_overheads: float = 0.0,
                               restaurant_name: str = "") -> str:
     """
-    Simple 4-week rolling cash flow forecast based on average weekly patterns.
+    4-week rolling cash flow forecast including all overhead costs.
+    weekly_overheads should include energy, rent, rates, etc. (excl. food/labour).
     """
     lines = [f"CASH FLOW FORECAST — {restaurant_name}", "─" * 36, ""]
 
     if not current_balance:
         lines.append("Set your current bank balance to see a forecast:")
         lines.append("  /cashflow 8400")
+        lines.append("")
+        lines.append("Tip: also log your fixed costs for an accurate forecast:")
+        lines.append("  /overhead rent 3200")
+        lines.append("  /overhead electricity 450")
         return "\n".join(lines)
 
-    weekly_costs = weekly_food_cost + weekly_labour
+    weekly_costs = weekly_food_cost + weekly_labour + weekly_overheads
     weekly_net   = weekly_revenue - weekly_costs
 
     lines.append(f"Current balance:      £{current_balance:>10,.0f}")
-    lines.append(f"")
+    lines.append("")
     lines.append(f"Weekly revenue (avg): £{weekly_revenue:>10,.0f}")
     lines.append(f"Weekly costs (avg):   £{weekly_costs:>10,.0f}")
     lines.append(f"  Food/drinks:        £{weekly_food_cost:>10,.0f}")
     lines.append(f"  Labour:             £{weekly_labour:>10,.0f}")
+    if weekly_overheads > 0:
+        lines.append(f"  Overheads:          £{weekly_overheads:>10,.0f}")
+    else:
+        lines.append(f"  Overheads:             not logged")
+        lines.append(f"  ⚠️ Add /overhead entries for accuracy")
     lines.append(f"Weekly net:           £{weekly_net:>10,.0f}")
     lines.append("")
     lines.append("PROJECTED BALANCE:")
@@ -742,5 +753,275 @@ def format_cashflow_forecast(current_balance: float, weekly_revenue: float,
     lines.append("")
     lines.append("Update balance: /cashflow <amount>  e.g. /cashflow 9500")
     lines.append("Based on this week's logged data — log more entries for accuracy.")
+
+    return "\n".join(lines)
+
+
+# ─── Overhead / operating expenses dashboard ──────────────────────────────────
+
+# Category display order and labels
+_OVERHEAD_CATEGORY_LABELS = {
+    "energy":     "ENERGY",
+    "occupancy":  "OCCUPANCY",
+    "marketing":  "MARKETING",
+    "finance":    "FINANCE",
+    "operations": "OPERATIONS",
+    "admin":      "ADMIN",
+}
+
+# UK benchmark: overhead as % of revenue (excl. food & labour)
+# Energy 3-5%, Occupancy 8-12%, Marketing 2-4%, Finance 1-2%, Operations 2-3%, Admin 1%
+_OVERHEAD_BENCHMARKS = {
+    "energy":     (3.0, 5.0),
+    "occupancy":  (8.0, 12.0),
+    "marketing":  (2.0, 4.0),
+    "finance":    (1.0, 2.5),
+    "operations": (1.5, 3.0),
+    "admin":      (0.5, 1.5),
+}
+
+
+def format_overhead_dashboard(summary: dict, revenue: float = 0.0,
+                               food_cost: float = 0.0, labour_cost: float = 0.0,
+                               restaurant_name: str = "", period_days: int = 30) -> str:
+    """
+    Format a full overhead expense breakdown with benchmarks and prime cost calculation.
+    summary: output of database.get_overhead_summary()
+    """
+    lines = [f"OVERHEAD EXPENSES ({period_days} days) — {restaurant_name}", "─" * 44, ""]
+
+    if not summary:
+        lines.append("No overhead expenses logged yet.")
+        lines.append("")
+        lines.append("Log your fixed and variable costs:")
+        lines.append("  /overhead electricity 450")
+        lines.append("  /overhead gas 380")
+        lines.append("  /overhead rent 3200")
+        lines.append("  /overhead rates 850")
+        lines.append("  /overhead insurance 290")
+        lines.append("  /overhead deliveroo 480")
+        lines.append("  /overhead card_fees 180")
+        lines.append("  /overhead water 95")
+        lines.append("  /overhead cleaning 65")
+        lines.append("  /overhead packaging 210")
+        lines.append("")
+        lines.append("Type /overhead for full list of categories.")
+        return "\n".join(lines)
+
+    grand_total = sum(
+        v["total"]
+        for cat in summary.values()
+        for v in cat.values()
+    )
+
+    if revenue > 0:
+        overhead_pct = (grand_total / revenue) * 100
+        pct_str = f"  ({overhead_pct:.1f}% of revenue)"
+        status = "✅" if overhead_pct <= 22 else ("⚠️" if overhead_pct <= 28 else "🔴")
+    else:
+        pct_str = ""
+        status = ""
+
+    lines.append(f"Total overheads:    £{grand_total:>9,.0f}{pct_str} {status}")
+    if revenue > 0:
+        lines.append(f"Revenue this period: £{revenue:>8,.0f}")
+    lines.append("")
+
+    # Per-category breakdown
+    category_order = ["energy", "occupancy", "marketing", "finance", "operations", "admin"]
+    for cat in category_order:
+        if cat not in summary:
+            continue
+        cat_total = sum(v["total"] for v in summary[cat].values())
+        label = _OVERHEAD_CATEGORY_LABELS.get(cat, cat.upper())
+        cat_pct = f"  {(cat_total/revenue*100):.1f}%" if revenue > 0 else ""
+
+        # Benchmark flag
+        bench = _OVERHEAD_BENCHMARKS.get(cat)
+        bench_flag = ""
+        if bench and revenue > 0:
+            pct = cat_total / revenue * 100
+            if pct > bench[1]:
+                bench_flag = " ⚠️ above target"
+            elif pct <= bench[0]:
+                bench_flag = " ✅"
+
+        lines.append(f"  {label:<14} £{cat_total:>8,.0f}{cat_pct}{bench_flag}")
+        for sub, data in sorted(summary[cat].items()):
+            lines.append(f"    {sub:<20} £{data['total']:>7,.0f}")
+        lines.append("")
+
+    # Prime cost section
+    if food_cost > 0 or labour_cost > 0:
+        energy_total = sum(v["total"] for v in summary.get("energy", {}).values())
+        prime = food_cost + labour_cost + energy_total
+        lines.append("─" * 44)
+        lines.append("PRIME COST (food + labour + energy):")
+        lines.append(f"  Food cost:    £{food_cost:>8,.0f}" +
+                     (f"  ({food_cost/revenue*100:.1f}%)" if revenue > 0 else ""))
+        lines.append(f"  Labour:       £{labour_cost:>8,.0f}" +
+                     (f"  ({labour_cost/revenue*100:.1f}%)" if revenue > 0 else ""))
+        lines.append(f"  Energy:       £{energy_total:>8,.0f}" +
+                     (f"  ({energy_total/revenue*100:.1f}%)" if revenue > 0 else ""))
+        lines.append(f"  ─────────────────────────")
+        prime_pct = prime / revenue * 100 if revenue > 0 else 0
+        prime_status = "✅" if prime_pct < 60 else ("⚠️" if prime_pct < 65 else "🔴")
+        lines.append(f"  PRIME TOTAL:  £{prime:>8,.0f}" +
+                     (f"  ({prime_pct:.1f}%) {prime_status}" if revenue > 0 else ""))
+        if revenue > 0:
+            lines.append(f"  UK target: prime cost < 60% of revenue")
+        lines.append("")
+
+    lines.append("Log expenses: /overhead <type> <£amount>")
+    lines.append("Examples:")
+    lines.append("  /overhead electricity 450")
+    lines.append("  /overhead rent 3200")
+    lines.append("  /overhead deliveroo 480")
+
+    return "\n".join(lines)
+
+
+# ─── Energy monitoring and advisor ───────────────────────────────────────────
+
+ENERGY_SAVING_TIPS = """
+ENERGY SAVING TIPS FOR RESTAURANTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔴 HIGH IMPACT — save £100–500/month:
+
+• FRYERS: Turn off between lunch and dinner
+  service. Each fryer costs ~£4/day to idle.
+  Turning off for 2 hours saves ~£50/month.
+
+• OVENS: Pre-heat 20 mins before service —
+  NOT 2 hours. Turn off 30 mins before close.
+  A commercial oven left on unnecessarily
+  wastes £80–120/month.
+
+• EXTRACTION FANS: Don't run at full speed
+  during quiet periods. Variable-speed fans
+  pay back their cost in under 12 months.
+
+• FRIDGE/FREEZER SEALS: A broken door seal
+  wastes 20–30% of fridge energy. Test it:
+  close the door on a piece of paper — if
+  the paper slides out easily, replace the
+  seal (costs ~£20, saves ~£30/month).
+
+🟡 MEDIUM IMPACT — save £30–100/month:
+
+• DISHWASHER: Only run full loads. Turn off
+  overnight. Leaving on standby costs £25/month.
+
+• HOT WATER: Set to exactly 60°C — hotter
+  wastes gas, colder risks legionella.
+
+• LIGHTING: Switch to LED bulbs throughout.
+  10 bulbs = ~£15/month saving. Add motion
+  sensors in storage rooms and toilets.
+
+• GRILL & HOT PLATE: Don't leave on between
+  service periods. 20 mins to heat up is enough.
+
+🟢 QUICK WINS — save £10–30/month:
+
+• Only boil what you need in the kettle.
+• Turn off TVs, screens and tablets overnight.
+• Defrost freezers regularly — ice build-up
+  forces the motor to work harder.
+• Use lids on pots — boils faster, uses less gas.
+• Check oven door seals every month.
+
+⏰ CLOSING CHECKLIST (save £150–300/month):
+
+Turn OFF every night:
+  ☐ Fryers
+  ☐ Ovens and grills
+  ☐ Hot holding / bain marie
+  ☐ Heat lamps
+  ☐ Dishwasher
+  ☐ Extraction fans
+  ☐ Non-essential fridges (if empty)
+  ☐ TVs and monitors
+  ☐ Coffee machine boiler (if not used mornings)
+  ☐ Non-essential lighting
+
+Always leave ON:
+  ✅ Main fridges and freezers
+  ✅ Alarm and CCTV
+  ✅ Emergency lighting
+
+📊 UK ENERGY BENCHMARK:
+  Energy should be 3–5% of weekly revenue.
+  Above 6%? You're likely wasting £200–500/month.
+
+  Typical costs (per month):
+    Small café / takeaway:    £400–900
+    Casual restaurant (50):   £800–1,800
+    Busy restaurant (100+):   £1,500–3,500
+""".strip()
+
+
+def format_energy_dashboard(energy_logs: list, revenue: float = 0.0,
+                             restaurant_name: str = "") -> str:
+    """Show energy cost history and benchmark against revenue."""
+    lines = [f"ENERGY TRACKER — {restaurant_name}", "─" * 36, ""]
+
+    if not energy_logs:
+        lines.append("No energy bills logged yet.")
+        lines.append("")
+        lines.append("Log your bills like this:")
+        lines.append("  /energy electricity 450")
+        lines.append("  /energy electricity 450 2800")
+        lines.append("  (£450 bill, 2800 kWh used)")
+        lines.append("")
+        lines.append("  /energy gas 380")
+        lines.append("  /energy gas 380 1200")
+        lines.append("  (£380 bill, 1200 m³ used)")
+        lines.append("")
+        lines.append("  /energy tips  — get energy saving advice")
+        return "\n".join(lines)
+
+    # Group by subcategory (Electricity, Gas, etc.)
+    totals: dict = {}
+    for row in energy_logs:
+        sub = row["subcategory"]
+        totals.setdefault(sub, {"amount": 0.0, "units": 0.0, "count": 0})
+        totals[sub]["amount"] += row["amount"]
+        if row["units"]:
+            totals[sub]["units"] += row["units"]
+        totals[sub]["count"] += 1
+
+    grand_total = sum(v["amount"] for v in totals.values())
+
+    if revenue > 0:
+        pct = grand_total / revenue * 100
+        bench = "✅ on target" if pct <= 5 else ("⚠️ above target — see /energy tips" if pct <= 7 else "🔴 HIGH — act now, see /energy tips")
+        lines.append(f"Total energy cost:  £{grand_total:,.0f}  ({pct:.1f}% of revenue)")
+        lines.append(f"UK benchmark (3–5%): {bench}")
+    else:
+        lines.append(f"Total energy cost:  £{grand_total:,.0f}")
+        lines.append("Log revenue entries so we can show your energy %.")
+    lines.append("")
+
+    for sub, data in sorted(totals.items()):
+        lines.append(f"  {sub:<16} £{data['amount']:>7,.0f}  ({data['count']} bills)")
+        if data["units"] > 0:
+            unit_label = "kWh" if "Electr" in sub else "m³"
+            cost_per = data["amount"] / data["units"]
+            lines.append(f"  {'':16} {data['units']:,.0f} {unit_label}  "
+                         f"({cost_per:.1f}p per {unit_label.rstrip('h')})")
+    lines.append("")
+
+    # Recent bills
+    lines.append("RECENT BILLS:")
+    for row in energy_logs[:6]:
+        note = f" — {row['note']}" if row["note"] else ""
+        units = f"  {row['units']:.0f} {'kWh' if 'Electr' in row['subcategory'] else 'm³'}" if row["units"] else ""
+        lines.append(f"  {row['bill_date']}  {row['subcategory']:<16} £{row['amount']:>7,.0f}{units}{note}")
+
+    lines.append("")
+    lines.append("For energy saving advice: /energy tips")
+    lines.append("Log a bill: /energy electricity 450 2800")
 
     return "\n".join(lines)
