@@ -29,7 +29,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # ── Model names (safe to leave as defaults) ───────────────────────────────────
-GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-1.5-flash")
+GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-2.0-flash")
 
 # ── Other settings ────────────────────────────────────────────────────────────
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")

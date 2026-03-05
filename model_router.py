@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # (max_count, provider, label, text_model, vision_model)
 # ============================================================
 _TIERS = [
-    (49,   "gemini", "Starter — Google Gemini (Free)",       "gemini-1.5-flash",            "gemini-1.5-flash"),
+    (49,   "gemini", "Starter — Google Gemini (Free)",       "gemini-2.0-flash",            "gemini-2.0-flash"),
     (99,   "groq",   "Growth — Groq / Llama (Free)",         "llama-3.3-70b-versatile",     "llama-3.2-11b-vision-preview"),
     (None, "claude", "Scale — Claude / Anthropic (Pro)",     "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"),
 ]
@@ -248,7 +248,7 @@ def _gemini_report(prompt: str) -> str:
     model = genai.GenerativeModel(GEMINI_MODEL)
     response = model.generate_content(
         prompt,
-        generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=1200),
+        generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=2500),
     )
     return response.text
 
@@ -298,7 +298,7 @@ def _groq_report(prompt: str, model: str) -> str:
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=1200,
+        max_tokens=2500,
     )
     return response.choices[0].message.content
 
@@ -348,7 +348,7 @@ def _claude_report(prompt: str, model: str) -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=model,
-        max_tokens=1200,
+        max_tokens=2500,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
@@ -431,10 +431,10 @@ def generate_report(entries_data: list, restaurant_name: str) -> str:
         }
         if e.get("analysis"):
             a = e["analysis"]
-            for key in ("category", "summary", "revenue", "covers"):
+            for key in ("category", "summary", "revenue", "covers", "urgency"):
                 if a.get(key):
                     item[key] = a[key]
-            for key in ("waste_items", "complaints", "items_86d"):
+            for key in ("waste_items", "complaints", "items_86d", "staff_issues", "supplier_mentions", "positive_notes"):
                 if a.get(key):
                     item[key] = a[key]
             if a.get("action_needed"):
