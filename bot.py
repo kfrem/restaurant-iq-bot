@@ -8,11 +8,13 @@ Handles:
   - /register  — register this Telegram group as a restaurant
   - /status    — show entries captured this week
   - /weeklyreport — generate and send the weekly intelligence briefing
+  - /demo      — load a realistic week of demo data for client presentations
+  - /demoreset — remove all demo data from this chat
 
 Message types:
-  - Voice notes  → transcribed by Whisper → analysed by Qwen
-  - Photos       → analysed by Qwen vision (invoice/receipt reading)
-  - Text         → analysed by Qwen fast model
+  - Voice notes  → transcribed by Whisper → analysed by AI
+  - Photos       → analysed by AI vision (invoice/receipt reading)
+  - Text         → analysed by AI fast model
 """
 
 import os
@@ -39,11 +41,13 @@ from database import (
     save_entry,
     get_week_entries,
     save_weekly_report,
+    get_connection,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
 from model_router import get_tier_status
 from report_generator import generate_pdf_report
+from demo_data import get_demo_entries, DEMO_STAFF
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -354,6 +358,121 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
+# Demo commands
+# ---------------------------------------------------------------------------
+
+DEMO_RESTAURANT_NAME = "The Golden Fork"
+DEMO_GROUP_PREFIX = "DEMO_"
+
+
+async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Load a full week of pre-built realistic demo data into this chat."""
+    chat_id = str(update.effective_chat.id)
+    user_id = str(update.effective_user.id)
+
+    await update.message.reply_text(
+        "Setting up demo data for The Golden Fork...\n"
+        "This takes just a second."
+    )
+
+    # Register demo restaurant for this chat (idempotent)
+    register_restaurant(DEMO_RESTAURANT_NAME, chat_id, user_id)
+    restaurant = get_restaurant_by_group(chat_id)
+    if not restaurant:
+        await update.message.reply_text("Failed to create demo restaurant. Please try again.")
+        return
+
+    # Register demo staff members with sequential fake IDs so they don't clash
+    staff_map: dict[str, int] = {}
+    for i, member in enumerate(DEMO_STAFF):
+        fake_user_id = f"DEMO_STAFF_{i}_{restaurant['id']}"
+        register_staff(restaurant["id"], fake_user_id, member["name"], member["role"])
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM staff WHERE restaurant_id = ? AND telegram_user_id = ?",
+            (restaurant["id"], fake_user_id),
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            staff_map[member["name"]] = row["id"]
+
+    # Insert all demo entries directly (no AI calls needed)
+    entries = get_demo_entries()
+    conn = get_connection()
+    cur = conn.cursor()
+    for e in entries:
+        staff_id = staff_map.get(e["staff_name"], staff_map.get("Jake"))
+        cur.execute(
+            """INSERT INTO daily_entries
+               (restaurant_id, staff_id, entry_date, entry_time, entry_type,
+                raw_text, structured_data, category)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                restaurant["id"],
+                staff_id,
+                e["entry_date"],
+                e["entry_time"],
+                e["entry_type"],
+                e["raw_text"],
+                e["structured_data"],
+                e["category"],
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    # Count entries by category for the summary
+    categories: dict = {}
+    for e in entries:
+        cat = e["category"]
+        categories[cat] = categories.get(cat, 0) + 1
+
+    cat_lines = "\n".join(f"  {cat}: {count}" for cat, count in sorted(categories.items()))
+
+    await update.message.reply_text(
+        f"Demo loaded for: {DEMO_RESTAURANT_NAME}\n"
+        f"{'=' * 36}\n\n"
+        f"Team members added:\n"
+        f"  Jake (owner), Sophie (staff), Marcus (staff)\n\n"
+        f"{len(entries)} entries captured this week:\n"
+        f"{cat_lines}\n\n"
+        f"What to show the client:\n"
+        f"  1. Send any text message → watch AI categorise it live\n"
+        f"  2. Send a voice note → watch transcription + analysis\n"
+        f"  3. /status → see the weekly entry summary\n"
+        f"  4. /weeklyreport → generate the full briefing + PDF\n\n"
+        f"Run /demoreset to clear all demo data when you're done."
+    )
+
+
+async def cmd_demoreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove all data associated with the demo restaurant in this chat."""
+    chat_id = str(update.effective_chat.id)
+    restaurant = get_restaurant_by_group(chat_id)
+    if not restaurant:
+        await update.message.reply_text("No restaurant registered in this chat.")
+        return
+
+    conn = get_connection()
+    cur = conn.cursor()
+    rid = restaurant["id"]
+
+    cur.execute("DELETE FROM daily_entries WHERE restaurant_id = ?", (rid,))
+    cur.execute("DELETE FROM weekly_reports WHERE restaurant_id = ?", (rid,))
+    cur.execute("DELETE FROM staff WHERE restaurant_id = ?", (rid,))
+    cur.execute("DELETE FROM restaurants WHERE id = ?", (rid,))
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(
+        "Demo reset complete.\n"
+        "All data removed. Run /register to start fresh, or /demo to reload demo data."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -367,6 +486,8 @@ def main():
     app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
+    app.add_handler(CommandHandler("demo", cmd_demo))
+    app.add_handler(CommandHandler("demoreset", cmd_demoreset))
 
     # Messages — order matters: voice before text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
