@@ -186,6 +186,15 @@ def get_week_entries(restaurant_id: int):
     return get_entries_for_period(restaurant_id, start, end)
 
 
+def get_restaurant_count() -> int:
+    """Return the total number of registered restaurants across all groups."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) as total FROM restaurants")
+        row = c.fetchone()
+    return row["total"] if row else 0
+
+
 def save_weekly_report(restaurant_id: int, week_start: str, week_end: str, report_text: str):
     with _db() as conn:
         c = conn.cursor()

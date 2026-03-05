@@ -42,6 +42,7 @@ from database import (
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
+from model_router import get_tier_status
 from report_generator import generate_pdf_report
 
 logging.basicConfig(
@@ -142,11 +143,20 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"  {cat}: {count}" for cat, count in sorted(categories.items())]
     cat_summary = "\n".join(lines) if lines else "  None yet"
 
+    tier = get_tier_status()
+    next_info = (
+        f"Next upgrade: {tier['next_tier']} at {tier['next_at']} restaurants"
+        if tier.get("next_at") else "You are on the top tier."
+    )
+
     await update.message.reply_text(
         f"Restaurant-IQ — {restaurant['name']}\n"
         f"Week from: {week_start_str}\n\n"
         f"Entries captured: {len(entries)}\n"
         f"By category:\n{cat_summary}\n\n"
+        f"AI Tier: {tier['label']}\n"
+        f"Restaurants registered: {tier['count']}\n"
+        f"{next_info}\n\n"
         f"Keep the data coming — voice notes, photos and texts all count!"
     )
 

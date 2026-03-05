@@ -1,205 +1,232 @@
 # Restaurant-IQ Bot
 
-A Telegram bot that captures operational data from restaurant staff — voice notes, invoice photos, and text updates — and turns it into a weekly AI-generated intelligence briefing with a branded PDF report.
-
-All AI runs **locally** on your machine via [Ollama](https://ollama.com). No data leaves your network.
-
----
-
-## What It Does
-
-Staff in a Telegram group simply send:
-
-| Input | What happens |
-|---|---|
-| **Voice note** | Transcribed by Whisper → analysed for revenue, covers, waste, issues |
-| **Photo** (invoice / receipt) | Read by vision model → supplier name, total, line items extracted |
-| **Text message** | Analysed for category, summary, urgency |
-
-At the end of the week, the owner runs `/weeklyreport` and receives:
-- A structured text briefing directly in Telegram
-- A branded A4 PDF attached to the same message
+A Telegram bot that captures operational data from restaurant staff —
+voice notes, invoice photos, and text updates — and turns it into a
+weekly AI-generated intelligence briefing with a branded PDF report.
 
 ---
 
-## Architecture
+## Your AI Upgrade Path (Fully Automatic)
 
-```
-bot.py                  Telegram bot entry point (python-telegram-bot)
-├── transcriber.py      Voice → text  (faster-whisper, runs on CPU)
-├── analyzer.py         Text/photo → structured JSON  (Ollama: gemma3:4b + qwen3-vl:30b)
-├── report_generator.py Weekly text → branded PDF  (ReportLab)
-├── database.py         SQLite persistence  (no ORM, plain sqlite3)
-└── config.py           Environment variable loading  (python-dotenv)
-```
+The bot switches AI providers by itself as you grow.
+**You never touch any code.** You just add the three API keys to Railway
+and the system handles the rest.
 
-### AI Models (via Ollama)
+| Restaurants registered | AI Provider | Cost | Quality |
+|------------------------|------------|------|---------|
+| 0 – 49 | Google Gemini | **FREE** | Good |
+| 50 – 99 | Groq / Llama | **FREE** | Better |
+| 100+ | Claude (Anthropic) | ~£5/month | Best |
 
-| Model | Use | Why |
-|---|---|---|
-| `gemma3:4b` | Text entry analysis | Fast; good structured JSON extraction |
-| `qwen3-vl:30b` | Invoice photo reading + weekly report narrative | Vision capability; best quality |
-| Whisper `base` | Voice transcription | Runs on CPU; no API cost |
-
-### Database (SQLite)
-
-Four tables:
-
-```
-restaurants          — one row per registered Telegram group
-staff                — auto-registered when a member first sends a message
-daily_entries        — every voice note / photo / text captured
-weekly_reports       — saved report text for each week
-```
+To see which AI tier is currently active, send `/status` in any registered group.
 
 ---
 
-## Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| Windows 10/11 or macOS | Linux also works |
-| Python 3.11+ | [python.org](https://python.org) |
-| [Ollama](https://ollama.com) | Must be running before starting the bot |
-| Telegram bot token | Create via [@BotFather](https://t.me/BotFather) |
-
-### Pull the required Ollama models (one-time, ~20 GB total)
-
-```bash
-ollama pull gemma3:4b
-ollama pull qwen3-vl:30b
-```
-
-> The `qwen3-vl:30b` model requires ~20 GB RAM. If your machine has less, swap it for `qwen2.5-vl:7b` in `.env` — quality will be lower but it will run.
+## SETUP GUIDE (Read this — it's all you need to do)
 
 ---
 
-## Quick Start (Windows)
+### STEP 1 — Get your three API keys
 
-1. Create a folder: `C:\RestaurantIQ`
-2. Download `install.py` from this repo into that folder
-3. Open Command Prompt and run:
-   ```
-   cd C:\RestaurantIQ
-   python install.py
-   ```
-4. When Notepad opens, replace `your_token_here` with your Telegram bot token and save
-5. Make sure Ollama is running, then:
-   ```
-   python bot.py
-   ```
+You need three keys total. You only need the first two **right now**.
+Get all three in advance so the system switches automatically.
 
 ---
 
-## Quick Start (Manual)
+#### Key 1: Telegram Bot Token (needed NOW)
 
-```bash
-# 1. Clone
-git clone https://github.com/YOUR_USERNAME/restaurant-iq-bot.git
-cd restaurant-iq-bot
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Configure
-cp .env.example .env
-# Edit .env and set TELEGRAM_BOT_TOKEN
-
-# 4. Run
-python bot.py
-```
+1. Open Telegram on your phone or computer
+2. Search for **@BotFather** and open that chat
+3. Send this message: `/newbot`
+4. It will ask for a name — type something like: `Restaurant IQ`
+5. It will ask for a username — type something like: `MyRestaurantIQBot`
+   *(must end in the word `bot`)*
+6. BotFather will send you a token that looks like this:
+   `123456789:ABCdefGHIjklmNOPqrstUVwxyz`
+7. Copy that token — you'll need it in Step 2
 
 ---
 
-## Environment Variables
+#### Key 2: Google Gemini API Key (needed NOW — completely FREE)
 
-Copy `.env.example` to `.env`:
+1. Go to this website: **https://aistudio.google.com/app/apikey**
+   *(Sign in with your Google account if asked)*
+2. Click the blue **"Create API key"** button
+3. A key will appear — it starts with `AIzaSy...`
+4. Click the copy icon next to it
+5. Keep it safe — you'll paste it in Step 2
 
-| Variable | Default | Description |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | — | **Required.** Token from @BotFather |
-| `OLLAMA_MODEL` | `qwen3-vl:30b` | Vision + report model |
-| `OLLAMA_TEXT_MODEL` | `gemma3:4b` | Fast text analysis model |
-| `WHISPER_MODEL_SIZE` | `base` | `tiny` / `base` / `small` / `medium` |
-| `DB_PATH` | `restaurant_iq.db` | SQLite database file path |
+---
+
+#### Key 3: Groq API Key (FREE — add this before you hit 50 restaurants)
+
+1. Go to: **https://console.groq.com/keys**
+   *(Create a free account with your email — no credit card)*
+2. Click **"Create API Key"**
+3. Give it any name, like `restaurant-iq`
+4. The key starts with `gsk_...`
+5. Copy it and keep it safe
+
+---
+
+#### Key 4: Anthropic (Claude) API Key (paid — add before you hit 100 restaurants)
+
+1. Go to: **https://console.anthropic.com/**
+   *(Create a free account)*
+2. Click **Settings → API Keys → Create Key**
+3. The key starts with `sk-ant-...`
+4. Go to **Billing** and add a card — put £10 credit on it
+   *(Each weekly report costs about £0.05 — very cheap)*
+5. Copy the key and keep it safe
+
+---
+
+### STEP 2 — Add your keys to Railway
+
+This is where all three keys get saved so the bot can use them.
+
+1. Go to **https://railway.app** and log in
+2. Click on your **restaurant-iq-bot** service
+3. Click the **"Variables"** tab at the top
+4. For each row in the table below:
+   - Click **"+ New Variable"**
+   - Type the **Variable Name** exactly as shown (left column)
+   - Paste your key in the **Value** field (right column)
+   - Press Enter or click the tick to save
+
+| Variable Name | What to paste here | Add when? |
+|--------------|-------------------|-----------|
+| `TELEGRAM_BOT_TOKEN` | Your token from Key 1 | NOW |
+| `GEMINI_API_KEY` | Your key from Key 2 | NOW |
+| `GROQ_API_KEY` | Your key from Key 3 | Before 50 restaurants |
+| `ANTHROPIC_API_KEY` | Your key from Key 4 | Before 100 restaurants |
+
+5. Railway will redeploy automatically. Wait 30 seconds.
+
+---
+
+### STEP 3 — Set up your Telegram group
+
+Do this once for each restaurant you want to manage.
+
+1. **Create a Telegram group** for the restaurant team
+   *(or use an existing one)*
+2. **Add your bot to the group** — tap the group name → Add Members → search for your bot's username
+3. **Make the bot an admin:**
+   - Tap the group name at the top
+   - Tap "Edit" (pencil icon)
+   - Tap "Administrators"
+   - Tap "Add Administrator"
+   - Select your bot
+   - Save
+4. In the group chat, type and send:
+   `/register Your Restaurant Name`
+   Example: `/register Joe's Bistro`
+5. Tell your team to start sending voice notes, photos, and text messages
+
+---
+
+### STEP 4 — That's it. The system does the rest.
+
+Every message sent in the group is automatically captured and analysed:
+
+| What staff send | What the bot does |
+|----------------|-------------------|
+| Voice note | Transcribes it, extracts category, urgency, revenue figures |
+| Photo of an invoice or receipt | Reads supplier name, total amount, all line items |
+| Text message | Categorises and summarises it |
+
+At the end of each week, send `/weeklyreport` to get:
+- A full intelligence briefing in the Telegram group
+- A branded PDF report attached to the same message
 
 ---
 
 ## Bot Commands
 
 | Command | Who uses it | What it does |
-|---|---|---|
-| `/start` | Anyone | Shows welcome message and usage guide |
-| `/register Name` | Owner | Registers this Telegram group as a restaurant |
-| `/status` | Owner / manager | Shows entry count and breakdown for the current week |
+|---------|------------|--------------|
+| `/start` | Anyone | Shows the welcome message |
+| `/register Your Name` | Owner | Registers this Telegram group as a restaurant |
+| `/status` | Owner or manager | Shows this week's entries + which AI tier is active |
 | `/weeklyreport` | Owner | Generates and sends the weekly briefing + PDF |
 
 ---
 
-## Telegram Group Setup
+## How the Automatic AI Switching Works
 
-1. Create a Telegram group for your restaurant team
-2. Add the bot to the group
-3. Promote the bot to **admin** (so it can read all messages)
-4. Send `/register Your Restaurant Name`
-5. Tell staff to send voice notes, photos, or texts — the bot captures everything automatically
+Every time the bot analyses something, it does this automatically:
 
-Multiple restaurants are supported: each Telegram group is a separate restaurant.
+```
+1. Count restaurants in the database
+2. Is the count 0-49?   → Use Google Gemini (free)
+   Is the count 50-99?  → Use Groq / Llama (free)
+   Is the count 100+?   → Use Claude / Anthropic (paid, best)
+3. Check that the required API key is saved in Railway
+4. If the key is missing, fall back to the previous tier
+   and log a warning (you'll see it in Railway Logs)
+5. Call the AI and return the result
+```
+
+**You never need to change any code.** Just make sure the keys are in Railway before you hit each threshold.
 
 ---
 
-## File Layout
+## File Structure
 
 ```
 restaurant-iq-bot/
-├── bot.py                  Main entry point
-├── config.py               Environment variable loading
-├── database.py             SQLite database layer
-├── transcriber.py          Whisper voice transcription
-├── analyzer.py             Ollama AI analysis
-├── report_generator.py     ReportLab PDF generation
-├── requirements.txt        Python dependencies
-├── .env.example            Environment variable template
-├── install.py              Windows one-click installer
-├── setup_windows.bat       Windows dependency installer
-└── reports/                Generated PDFs (auto-created)
+├── bot.py              Telegram bot — commands and message handlers
+├── model_router.py     AI auto-switching brain — all three providers live here
+├── analyzer.py         Thin wrapper that calls model_router
+├── transcriber.py      Voice → text (Whisper, runs on the server)
+├── database.py         SQLite database layer
+├── report_generator.py PDF generation (ReportLab)
+├── config.py           Loads environment variables from Railway
+├── requirements.txt    Python package dependencies
+└── .env.example        Template showing all available variables
 ```
 
 ---
 
-## Dependencies
+## Security — Keeping Your Keys Safe
 
-```
-python-telegram-bot==22.6   Telegram Bot API async client
-faster-whisper==1.2.1       Local Whisper transcription
-ollama==0.6.1               Ollama Python client
-Pillow==12.1.1              Image handling
-reportlab==4.4.10           PDF generation
-python-dotenv==1.2.2        .env file loading
-```
+**Never share your API keys with anyone.**
+Never paste them into code files, emails, or chats.
+Always store them only in Railway Variables.
+
+If you accidentally shared a key, regenerate it immediately:
+- **Gemini key**: Go to https://aistudio.google.com/app/apikey → delete the old key → create a new one → update Railway
+- **Groq key**: Go to https://console.groq.com/keys → delete → create new → update Railway
+- **Telegram token**: Message @BotFather → `/revoke` → it gives you a new token → update Railway
+- **Anthropic key**: Go to https://console.anthropic.com/settings/keys → delete → create new → update Railway
 
 ---
 
 ## Troubleshooting
 
-**Bot starts but doesn't respond to messages**
-- Check the bot is an admin in the group
+**The bot doesn't respond to messages in the group**
+- Make sure you made the bot an **admin** in the group
 - Make sure you sent `/register` first
+- Check Railway Logs for any error messages
 
-**"Error connecting to Ollama"**
-- Open Ollama from the system tray (Windows) or run `ollama serve` in a terminal
-- Confirm models are downloaded: `ollama list`
+**"GEMINI_API_KEY is not set" error on startup**
+- Go to Railway → your service → Variables → add `GEMINI_API_KEY`
+- Get a free key at https://aistudio.google.com/app/apikey
 
-**Voice notes not transcribing**
-- Whisper downloads its model on first use (~150 MB for `base`) — wait for it to finish
-- Try `WHISPER_MODEL_SIZE=small` in `.env` for better accuracy
+**The bot is still using Gemini even though I have 50+ restaurants**
+- Add `GROQ_API_KEY` in Railway Variables (see Step 1, Key 3)
+- Without that key, the system falls back to Gemini automatically
 
-**Weekly report is very slow**
-- The `qwen3-vl:30b` model takes 3–5 minutes on a typical laptop
-- For faster (lower quality) reports, set `OLLAMA_MODEL=gemma3:4b` in `.env`
+**Voice notes are not being transcribed**
+- The very first voice note downloads the Whisper model (~150 MB) — just wait a minute
+- If accuracy is low, add `WHISPER_MODEL_SIZE` = `small` in Railway Variables
 
----
+**The weekly report takes a long time**
+- With Gemini/Groq: 20–60 seconds
+- With Claude: 10–30 seconds
+- This is normal — the AI is reading all your week's data
 
-## Outstanding Work
-
-See [DEVELOPER.md](DEVELOPER.md) for the full technical handover including outstanding features, architecture decisions, and implementation notes for the next developer.
+**I want to upgrade to the next tier early (before hitting the restaurant count)**
+- Just add the API key in Railway — the system will use it once you hit the threshold
+- To force an immediate switch, contact your developer (one small config change needed)

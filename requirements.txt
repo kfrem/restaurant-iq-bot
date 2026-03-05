@@ -1,6 +1,8 @@
 python-telegram-bot==22.6
 faster-whisper==1.2.1
 google-generativeai==0.8.3
+groq==0.13.0
+anthropic==0.49.0
 Pillow==12.1.1
 reportlab==4.4.10
 python-dotenv==1.2.2
