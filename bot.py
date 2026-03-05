@@ -4,20 +4,21 @@ Restaurant-IQ Telegram Bot
 Entry point. Run with:  python bot.py
 
 Handles:
-  - /start     — welcome message
-  - /register  — register this Telegram group as a restaurant
-  - /status    — show entries captured this week
+  - /start        — welcome message
+  - /register     — register this Telegram group as a restaurant
+  - /status       — show entries captured this week
   - /weeklyreport — generate and send the weekly intelligence briefing
 
 Message types:
-  - Voice notes  → transcribed by Whisper → analysed by Qwen
-  - Photos       → analysed by Qwen vision (invoice/receipt reading)
-  - Text         → analysed by Qwen fast model
+  - Voice notes  → transcribed by Whisper → analysed by Gemini
+  - Photos       → analysed by Gemini vision (invoice/receipt reading)
+  - Text         → analysed by Gemini
 """
 
 import os
 import json
 import logging
+import traceback
 from datetime import datetime, timedelta
 
 from telegram import Update
@@ -264,6 +265,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Summary: {summary}\n"
             f"Urgency: {icon} {urgency}"
         )
+    except Exception as e:
+        logger.error("Voice handler error: %s\n%s", e, traceback.format_exc())
+        await update.message.reply_text(
+            "Sorry, something went wrong processing your voice note. "
+            "Please try again or send a text update instead."
+        )
     finally:
         try:
             os.remove(file_path)
@@ -312,6 +319,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Summary: {analysis.get('summary', 'Document logged')}\n\n"
             f"Added to your weekly briefing."
         )
+    except Exception as e:
+        logger.error("Photo handler error: %s\n%s", e, traceback.format_exc())
+        await update.message.reply_text(
+            "Sorry, something went wrong reading that photo. "
+            "Please try again or describe the invoice in a text message."
+        )
     finally:
         try:
             os.remove(file_path)
@@ -327,20 +340,42 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     staff = _ensure_staff(restaurant["id"], update.effective_user)
 
-    analysis = analyze_text_entry(text, restaurant["name"])
-    save_entry(
-        restaurant["id"],
-        staff["id"],
-        "text",
-        text,
-        json.dumps(analysis),
-        analysis.get("category", "general"),
-    )
+    try:
+        analysis = analyze_text_entry(text, restaurant["name"])
+        save_entry(
+            restaurant["id"],
+            staff["id"],
+            "text",
+            text,
+            json.dumps(analysis),
+            analysis.get("category", "general"),
+        )
 
-    summary = analysis.get("summary", text[:80])
-    await update.message.reply_text(
-        f"Noted ({analysis.get('category', 'general')}): {summary}"
-    )
+        summary = analysis.get("summary", text[:80])
+        await update.message.reply_text(
+            f"Noted ({analysis.get('category', 'general')}): {summary}"
+        )
+    except Exception as e:
+        logger.error("Text handler error: %s\n%s", e, traceback.format_exc())
+        await update.message.reply_text(
+            "Sorry, something went wrong saving that message. Please try again."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Application-level error handler
+# ---------------------------------------------------------------------------
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log all unhandled exceptions and notify the user if possible."""
+    logger.error("Unhandled exception: %s\n%s", context.error, traceback.format_exc())
+    if isinstance(update, Update) and update.message:
+        try:
+            await update.message.reply_text(
+                "An unexpected error occurred. Please try again in a moment."
+            )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +397,9 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Catch-all error handler
+    app.add_error_handler(error_handler)
 
     logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)
