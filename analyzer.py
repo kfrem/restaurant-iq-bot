@@ -9,7 +9,9 @@ AI analysis using local Ollama models.
 import json
 import base64
 import ollama
-from config import OLLAMA_MODEL, OLLAMA_TEXT_MODEL
+from config import OLLAMA_MODEL, OLLAMA_TEXT_MODEL, OLLAMA_HOST
+
+_ollama_client = ollama.Client(host=OLLAMA_HOST)
 
 
 def _extract_json(text: str) -> dict:
@@ -50,7 +52,7 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 }}"""
 
     try:
-        response = ollama.chat(
+        response = _ollama_client.chat(
             model=OLLAMA_TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.1, "num_predict": 400},
@@ -96,7 +98,7 @@ Return ONLY valid JSON — no markdown, no explanation:
 }}"""
 
     try:
-        response = ollama.chat(
+        response = _ollama_client.chat(
             model=OLLAMA_MODEL,
             messages=[
                 {
@@ -186,7 +188,7 @@ Guidelines:
 - Keep each section concise — no filler sentences"""
 
     try:
-        response = ollama.chat(
+        response = _ollama_client.chat(
             model=OLLAMA_MODEL,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": 0.3, "num_predict": 1200},
