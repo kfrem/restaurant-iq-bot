@@ -4,15 +4,15 @@ Restaurant-IQ Telegram Bot
 Entry point. Run with:  python bot.py
 
 Handles:
-  - /start     — welcome message
-  - /register  — register this Telegram group as a restaurant
-  - /status    — show entries captured this week
+  - /start        — welcome message
+  - /register     — register this Telegram group as a restaurant
+  - /status       — show entries captured this week
   - /weeklyreport — generate and send the weekly intelligence briefing
 
 Message types:
-  - Voice notes  → transcribed by Whisper → analysed by Qwen
-  - Photos       → analysed by Qwen vision (invoice/receipt reading)
-  - Text         → analysed by Qwen fast model
+  - Voice notes  → transcribed by Whisper → analysed by Gemini
+  - Photos       → analysed by Gemini vision (invoice/receipt reading)
+  - Text         → analysed by Gemini
 """
 
 import os
@@ -384,19 +384,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     init_db()
-
-    # Warn if Ollama is not reachable — AI analysis will fall back to defaults
-    try:
-        import ollama as _ollama
-        _ollama.list()
-        logger.info("Ollama is reachable.")
-    except Exception as e:
-        logger.warning(
-            "Ollama is NOT reachable (%s). "
-            "Set OLLAMA_HOST if Ollama runs on a different machine. "
-            "AI analysis will return placeholder data until Ollama is available.",
-            e,
-        )
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
