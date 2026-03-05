@@ -32,5 +32,5 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-2.0-flash")
 
 # ── Other settings ────────────────────────────────────────────────────────────
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
 DB_PATH            = os.getenv("DB_PATH",            "restaurant_iq.db")

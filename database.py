@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -71,6 +72,27 @@ def init_db():
                 report_text TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
+        # Invoice tracking — populated whenever a photo invoice is saved.
+        # Enables payment reminders, outstanding balance tracking, and P&L.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                entry_id INTEGER,
+                supplier_name TEXT,
+                invoice_date TEXT,
+                due_date TEXT,
+                total_amount REAL,
+                vat REAL,
+                description TEXT,
+                paid INTEGER DEFAULT 0,
+                paid_date TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (entry_id) REFERENCES daily_entries(id)
             )
         """)
 
@@ -165,6 +187,7 @@ def save_entry(restaurant_id: int, staff_id: int, entry_type: str,
             ),
         )
         conn.commit()
+        return c.lastrowid
 
 
 def get_entries_for_period(restaurant_id: int, start_date: str, end_date: str):
@@ -204,3 +227,121 @@ def save_weekly_report(restaurant_id: int, week_start: str, week_end: str, repor
             (restaurant_id, week_start, week_end, report_text),
         )
         conn.commit()
+
+
+# ── Invoice tracking ──────────────────────────────────────────────────────────
+
+def save_invoice(restaurant_id: int, entry_id: int, supplier_name: str,
+                 invoice_date: str, due_date: str, total_amount: float,
+                 vat: float, description: str):
+    """Record an invoice for payment tracking and P&L. Called after every photo invoice."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO invoices
+               (restaurant_id, entry_id, supplier_name, invoice_date, due_date,
+                total_amount, vat, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, entry_id, supplier_name, invoice_date, due_date,
+             total_amount, vat, description),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_outstanding_invoices(restaurant_id: int) -> list:
+    """Return all unpaid invoices sorted by due date (most urgent first)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM invoices
+               WHERE restaurant_id = ? AND paid = 0
+               ORDER BY due_date ASC NULLS LAST""",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def mark_invoice_paid(invoice_id: int) -> bool:
+    """Mark an invoice as paid. Returns True if a record was updated."""
+    with _db() as conn:
+        c = conn.cursor()
+        today = datetime.now().strftime("%Y-%m-%d")
+        c.execute(
+            "UPDATE invoices SET paid = 1, paid_date = ? WHERE id = ?",
+            (today, invoice_id),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_invoices_due_soon(days_ahead: int = 3) -> list:
+    """Return unpaid invoices across ALL restaurants that are due within days_ahead days.
+    Used by the daily reminder scheduler."""
+    with _db() as conn:
+        c = conn.cursor()
+        today = datetime.now().strftime("%Y-%m-%d")
+        cutoff = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        c.execute(
+            """SELECT i.*, r.telegram_group_id, r.name as restaurant_name
+               FROM invoices i
+               JOIN restaurants r ON i.restaurant_id = r.id
+               WHERE i.paid = 0 AND i.due_date IS NOT NULL AND i.due_date <= ?
+               ORDER BY i.due_date ASC""",
+            (cutoff,),
+        )
+        return c.fetchall()
+
+
+def get_financial_summary(restaurant_id: int, start_date: str, end_date: str) -> dict:
+    """
+    Calculate revenue, cost totals and gross profit from entries in a period.
+    Revenue comes from structured_data.revenue fields on revenue-category entries.
+    Costs come from structured_data.total_amount fields on cost-category photo entries.
+    Returns a dict with totals and itemised cost list.
+    """
+    entries = get_entries_for_period(restaurant_id, start_date, end_date)
+
+    revenue_total = 0.0
+    cost_total = 0.0
+    cost_items = []
+
+    for e in entries:
+        if not e["structured_data"]:
+            continue
+        try:
+            data = json.loads(e["structured_data"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if e["category"] == "revenue" and data.get("revenue"):
+            try:
+                revenue_total += float(data["revenue"])
+            except (TypeError, ValueError):
+                pass
+
+        if e["category"] == "cost" and data.get("total_amount"):
+            try:
+                amount = float(data["total_amount"])
+                cost_total += amount
+                cost_items.append({
+                    "supplier": data.get("supplier_name", "Unknown"),
+                    "amount": amount,
+                    "date": e["entry_date"],
+                    "description": data.get("summary", ""),
+                })
+            except (TypeError, ValueError):
+                pass
+
+    gross_profit = revenue_total - cost_total
+    gross_margin = round(gross_profit / revenue_total * 100, 1) if revenue_total else 0.0
+
+    return {
+        "period_start": start_date,
+        "period_end": end_date,
+        "revenue_total": round(revenue_total, 2),
+        "cost_total": round(cost_total, 2),
+        "gross_profit": round(gross_profit, 2),
+        "gross_margin_pct": gross_margin,
+        "cost_items": cost_items,
+    }

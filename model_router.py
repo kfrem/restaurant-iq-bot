@@ -73,40 +73,63 @@ Return ONLY valid JSON — no markdown, no explanation:
   "document_type": "invoice|receipt|delivery_note|other",
   "supplier_name": "",
   "date": "",
+  "due_date": null,
+  "payment_terms": null,
   "total_amount": null,
   "vat": null,
   "items": [
     {{"name": "", "quantity": null, "unit": "", "unit_price": null, "total": null}}
   ],
   "summary": "one line summary"
-}}"""
+}}
+
+For due_date: if payment terms are shown (e.g. "Net 30", "30 days"), calculate the due date from the invoice date and return as YYYY-MM-DD.
+If no terms shown, return null for both due_date and payment_terms."""
 
 
-def _report_prompt(entries_summary: list, restaurant_name: str) -> str:
+def _report_prompt(entries_summary: list, restaurant_name: str,
+                   financials: dict | None = None) -> str:
+    fin_block = ""
+    if financials and financials.get("revenue_total", 0) > 0:
+        fin_block = f"""
+Pre-calculated financial totals for this period:
+  Revenue captured: £{financials['revenue_total']:,.2f}
+  Invoiced costs captured: £{financials['cost_total']:,.2f}
+  Gross profit (revenue minus invoiced costs): £{financials['gross_profit']:,.2f}
+  Gross margin: {financials['gross_margin_pct']}%
+  Note: costs figure includes only invoices photographed this week. Labour and other costs not captured here.
+"""
+
     return f"""You are Restaurant-IQ, an AI intelligence service for "{restaurant_name}", a London food business.
 You combine chartered accountancy discipline and food economics expertise with AI analysis.
 
 Here is all data captured this week from staff voice notes, photos and messages:
 
 {json.dumps(entries_summary, indent=2)}
-
+{fin_block}
 Write a WEEKLY INTELLIGENCE BRIEFING with these sections:
 
 ## WEEK AT A GLANCE
-- Total revenue captured (if reported), total covers, key highlights
+- Total revenue, total covers, gross profit (if data available), key highlights
+
+## FINANCIAL SUMMARY
+- Revenue vs invoiced costs breakdown
+- Gross margin analysis
+- Cost items captured this week (supplier, amount)
+- Flag any cost items that look unusually high or that represent price increases
 
 ## COST ALERTS
-- Supplier price changes, invoice anomalies, food cost concerns
+- Supplier price changes, invoice anomalies, food cost concerns, energy bills
 
 ## OPERATIONAL INSIGHTS
-- Waste and 86'd item patterns, staff issues, complaint themes
+- Waste and 86'd item patterns, staff issues, complaint themes, supplier performance
 
 ## TOP ACTIONS FOR NEXT WEEK
 Numbered list of 3-5 specific, actionable priorities ranked by financial impact.
 Include an estimated £ impact where data supports it.
 
 ## POSITIVE HIGHLIGHTS
-What went well this week.
+What went well this week — customer feedback, staff performance, menu wins.
 
 ---
 Guidelines:
@@ -416,7 +439,8 @@ def analyze_image(image_path: str, restaurant_name: str) -> dict:
         }
 
 
-def generate_report(entries_data: list, restaurant_name: str) -> str:
+def generate_report(entries_data: list, restaurant_name: str,
+                    financials: dict | None = None) -> str:
     tier = _select_tier()
     provider = tier["provider"]
 
@@ -441,7 +465,7 @@ def generate_report(entries_data: list, restaurant_name: str) -> str:
                 item["action_needed"] = True
         summary.append(item)
 
-    prompt = _report_prompt(summary, restaurant_name)
+    prompt = _report_prompt(summary, restaurant_name, financials)
 
     try:
         if provider == "groq":
@@ -459,3 +483,49 @@ def generate_report(entries_data: list, restaurant_name: str) -> str:
             f"Current AI tier: {tier['label']}.\n"
             "Check your API key is valid and has not exceeded its rate limit."
         )
+
+
+def generate_recall_summary(entries_data: list, query_text: str,
+                             restaurant_name: str) -> str:
+    """
+    Summarise a set of entries for a date-based recall query.
+    Used by the /recall command.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    lines = []
+    for e in entries_data:
+        line = f"[{e.get('date')} {e.get('time', '')}] ({e.get('type', 'text').upper()})"
+        if e.get("analysis") and e["analysis"].get("summary"):
+            line += f" {e['analysis']['summary']}"
+        elif e.get("raw_text"):
+            line += f" {e['raw_text'][:150]}"
+        lines.append(line)
+
+    entries_block = "\n".join(lines) if lines else "No entries found for this period."
+
+    prompt = f"""You are Restaurant-IQ, the operational memory for "{restaurant_name}".
+
+The owner has asked: "{query_text}"
+
+Here are all entries recorded for the requested period:
+
+{entries_block}
+
+Write a concise, conversational summary (3-10 bullet points) of what happened.
+Group by theme — revenue, costs, staffing, issues, positives.
+Be specific with numbers and names where available.
+End with any unresolved actions from this period.
+Use plain text, no markdown headers."""
+
+    try:
+        if provider == "groq":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        elif provider == "claude":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        else:
+            return _TEXT_FN[provider](prompt).strip()
+    except Exception as e:
+        logger.error("generate_recall_summary error (%s): %s", provider, e)
+        return entries_block  # Fall back to raw list
