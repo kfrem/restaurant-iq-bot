@@ -1,17 +1,22 @@
 """
-AI analysis using local Ollama models.
+AI analysis using Google Gemini API (free tier).
 
-- Text entries: gemma3:4b (fast, good enough for structured extraction)
-- Invoice photos: qwen3-vl:30b (vision model, reads images)
-- Weekly reports: qwen3-vl:30b (largest context, best quality narrative)
+- Text entries: gemini-1.5-flash (fast, structured extraction)
+- Invoice photos: gemini-1.5-flash (vision — reads images natively)
+- Weekly reports: gemini-1.5-flash (strong narrative quality)
+
+Free tier limits: 1,500 requests/day, 1M tokens/minute.
+Upgrade path: switch GEMINI_MODEL to gemini-1.5-pro for higher quality,
+or swap this module for Groq/Claude when scaling.
 """
 
 import json
-import base64
-import ollama
-from config import OLLAMA_MODEL, OLLAMA_TEXT_MODEL, OLLAMA_HOST
+import google.generativeai as genai
+from PIL import Image
+from config import GEMINI_API_KEY, GEMINI_MODEL
 
-_ollama_client = ollama.Client(host=OLLAMA_HOST)
+genai.configure(api_key=GEMINI_API_KEY)
+_model = genai.GenerativeModel(GEMINI_MODEL)
 
 
 def _extract_json(text: str) -> dict:
@@ -24,11 +29,9 @@ def _extract_json(text: str) -> dict:
         return {}
 
 
-
 def analyze_text_entry(text: str, restaurant_name: str = "") -> dict:
     """
     Extract structured data from a staff text/voice entry.
-    Uses the fast text model (gemma3:4b).
     """
     prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
 A staff member has sent this update. Extract key information.
@@ -52,12 +55,14 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 }}"""
 
     try:
-        response = _ollama_client.chat(
-            model=OLLAMA_TEXT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.1, "num_predict": 400},
+        response = _model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=400,
+            ),
         )
-        result = _extract_json(response.message.content)
+        result = _extract_json(response.text)
         if result:
             return result
         raise ValueError("Empty JSON response from model")
@@ -73,13 +78,9 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 
 def analyze_invoice_photo(image_path: str, restaurant_name: str = "") -> dict:
     """
-    Read an invoice or receipt photo using the vision model (qwen3-vl:30b).
+    Read an invoice or receipt photo using Gemini vision.
     Returns structured invoice data.
     """
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
     prompt = f"""You are an invoice analyst for "{restaurant_name}".
 Read this invoice or receipt image carefully and extract all data.
 
@@ -98,18 +99,15 @@ Return ONLY valid JSON — no markdown, no explanation:
 }}"""
 
     try:
-        response = _ollama_client.chat(
-            model=OLLAMA_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": [image_b64],
-                }
-            ],
-            options={"temperature": 0.1, "num_predict": 600},
+        image = Image.open(image_path)
+        response = _model.generate_content(
+            [prompt, image],
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=600,
+            ),
         )
-        result = _extract_json(response.message.content)
+        result = _extract_json(response.text)
         if result:
             return result
         raise ValueError("Empty JSON response from model")
@@ -125,9 +123,7 @@ Return ONLY valid JSON — no markdown, no explanation:
 def generate_weekly_report(entries_data: list, restaurant_name: str = "") -> str:
     """
     Generate a plain-English weekly intelligence briefing from all week's entries.
-    Uses the large model for best narrative quality.
     """
-    # Summarise entries to keep the prompt manageable
     entries_summary = []
     for e in entries_data:
         item = {
@@ -188,17 +184,19 @@ Guidelines:
 - Keep each section concise — no filler sentences"""
 
     try:
-        response = _ollama_client.chat(
-            model=OLLAMA_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3, "num_predict": 1200},
+        response = _model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=1200,
+            ),
         )
-        return response.message.content.strip()
+        return response.text.strip()
     except Exception as e:
         print(f"Report generation error: {e}")
         return (
             f"## Weekly Briefing — {restaurant_name}\n\n"
             f"Unable to generate AI report (model error: {e}).\n\n"
             f"Raw data captured this week: {len(entries_data)} entries.\n"
-            "Please check that Ollama is running: open a new terminal and run `ollama serve`"
+            "Please check your GEMINI_API_KEY is valid and has not exceeded the free tier limit."
         )
