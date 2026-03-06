@@ -547,6 +547,196 @@ def generate_report(entries_data: list, restaurant_name: str,
         )
 
 
+def analyze_correction(original_text: str, correction: str, restaurant_name: str) -> dict:
+    """
+    Re-analyse an entry applying a specific correction.
+    Uses a dedicated prompt so the AI applies the fix rather than
+    treating the correction text as new data to extract.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
+
+A staff member logged this entry:
+ORIGINAL: "{original_text}"
+
+They want to correct one specific detail:
+CORRECTION: "{correction}"
+
+Apply ONLY the stated correction. Fix just that detail — do not re-interpret the rest of the original entry.
+The summary must reflect the corrected information in plain English. Do NOT include the words "correction" or "CORRECTION" in the summary.
+
+Return ONLY valid JSON — no markdown, no explanation:
+{{
+  "category": "revenue|cost|waste|staff|issue|supplier|general",
+  "summary": "corrected one-sentence summary (no mention of the word correction)",
+  "revenue": null,
+  "covers": null,
+  "waste_items": [],
+  "items_86d": [],
+  "staff_issues": [],
+  "supplier_mentions": [],
+  "complaints": [],
+  "positive_notes": [],
+  "action_needed": false,
+  "urgency": "low|medium|high",
+  "tips_detected": false,
+  "tip_amount": null,
+  "tip_type": null,
+  "allergen_risk": false,
+  "allergen_detail": null
+}}"""
+
+    try:
+        if provider == "groq":
+            raw = _TEXT_FN[provider](prompt, tier["text_model"])
+        elif provider == "claude":
+            raw = _TEXT_FN[provider](prompt, tier["text_model"])
+        else:
+            raw = _TEXT_FN[provider](prompt)
+
+        result = _extract_json(raw)
+        if result:
+            return result
+        raise ValueError("Empty or invalid JSON from model")
+    except Exception as e:
+        logger.error("analyze_correction error (%s): %s", provider, e)
+        return {
+            "category": "general",
+            "summary": f"{original_text[:100]} [correction applied: {correction[:60]}]",
+            "action_needed": False,
+            "urgency": "low",
+        }
+
+
+def analyze_history_week(description: str, start_date: str, end_date: str,
+                         restaurant_name: str) -> list:
+    """
+    Parse a plain-language description of a historical week and return
+    a list of daily entry dicts ready to be saved to the database.
+    Used by /importweek for backfilling historical data.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
+
+A restaurant owner is importing historical data for the week {start_date} to {end_date}.
+They have described the week as follows:
+
+"{description}"
+
+Extract the key facts and create 3-7 representative daily log entries covering this week.
+Spread entries across different days within {start_date} to {end_date}.
+Each entry should represent one real event (a shift report, a supplier delivery, a staff issue, etc).
+
+Return ONLY valid JSON — a JSON array of entry objects, no markdown:
+[
+  {{
+    "date": "YYYY-MM-DD",
+    "time": "HH:MM:SS",
+    "type": "voice",
+    "category": "revenue|cost|waste|staff|issue|supplier|general",
+    "raw_text": "plain English description of what happened on this day",
+    "summary": "one sentence",
+    "revenue": null,
+    "covers": null,
+    "urgency": "low|medium|high"
+  }}
+]
+
+Use dates between {start_date} and {end_date} only.
+Distribute entries realistically (not all on the same day).
+If revenue is mentioned, estimate a per-day split across the week."""
+
+    try:
+        if provider == "groq":
+            raw = _TEXT_FN[provider](prompt, tier["text_model"])
+        elif provider == "claude":
+            raw = _TEXT_FN[provider](prompt, tier["text_model"])
+        else:
+            raw = _TEXT_FN[provider](prompt)
+
+        # The response is a JSON array
+        try:
+            start = raw.index("[")
+            end = raw.rindex("]") + 1
+            entries = json.loads(raw[start:end])
+            if isinstance(entries, list):
+                return entries
+        except (ValueError, json.JSONDecodeError):
+            pass
+        raise ValueError("Could not parse entries array from model")
+    except Exception as e:
+        logger.error("analyze_history_week error (%s): %s", provider, e)
+        return []
+
+
+def answer_help_question(question: str, restaurant_name: str) -> str:
+    """
+    Answer a restaurant owner's question about how to use the bot.
+    Returns a plain-English helpful response.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    prompt = f"""You are Restaurant-IQ, a Telegram bot assistant for "{restaurant_name}".
+The owner is asking a question about how to use you.
+
+QUESTION: "{question}"
+
+You know everything about the bot's capabilities. Here is a full reference:
+
+DAILY USE: Send voice notes, photos of invoices, or text messages to the group.
+  Voice notes are transcribed and analysed automatically.
+  Invoice photos are read and added to the payment tracker.
+
+COMMANDS:
+  /status        — how many entries captured this week
+  /today         — what was logged today
+  /recall [date] — recall any day or week (e.g. /recall yesterday, /recall 5 May, /recall March)
+  /weeklyreport  — full AI briefing + PDF for the current week
+  /financials    — revenue vs costs for any period
+  /outstanding   — unpaid invoices
+  /markpaid [id] — mark an invoice as paid
+  /correct [fix] — fix a detail in your last entry (e.g. /correct the amount was £450 not £540)
+  /deletelast    — delete your last entry and re-send
+  /importweek    — import a historical week of data
+  /rename [name] — rename your restaurant
+  /cleardata     — delete all entries (keeps registration)
+  /tips          — tip events log (Tips Act 2023)
+  /tipsreport    — generate formal tip allocation record
+  /allergens     — allergen traceability log (Natasha's Law)
+  /inspection    — FSA inspection readiness report
+  /ask [question]— ask me anything about the bot
+  /support [msg] — report a problem to the app support team
+
+TIPS FOR BEST RESULTS:
+  - End-of-shift voice notes are the most valuable thing your team can do
+  - Photograph invoices the day they arrive for accurate due date tracking
+  - The /correct command only fixes one detail — state exactly what changed
+  - Use /importweek to backfill historical weeks before you started using the bot
+
+Answer the question concisely and helpfully. Be specific — reference actual commands.
+If the question is about a problem, explain what likely went wrong and how to fix it.
+Use plain English, no jargon. Keep your answer under 200 words."""
+
+    try:
+        if provider == "groq":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        elif provider == "claude":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        else:
+            return _TEXT_FN[provider](prompt).strip()
+    except Exception as e:
+        logger.error("answer_help_question error (%s): %s", provider, e)
+        return (
+            "I couldn't generate a full answer right now. "
+            "Try /features for a complete guide, or /support to contact the support team directly."
+        )
+
+
 def generate_tips_report(tips_events: list, summary: dict,
                          restaurant_name: str, period_label: str) -> str:
     """

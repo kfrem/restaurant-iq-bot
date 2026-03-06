@@ -43,7 +43,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID
 from database import (
     init_db,
     register_restaurant,
@@ -70,10 +70,21 @@ from database import (
     save_allergen_alert,
     get_allergen_alerts,
     resolve_allergen_alert,
+    clear_all_entries,
+    save_support_ticket,
+    get_support_tickets,
+    get_ticket_by_id,
+    resolve_support_ticket,
+    get_all_open_tickets,
+    update_restaurant_name,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
-from model_router import get_tier_status, generate_recall_summary, generate_tips_report, generate_inspection_report
+from model_router import (
+    get_tier_status, generate_recall_summary, generate_tips_report,
+    generate_inspection_report, analyze_correction, analyze_history_week,
+    answer_help_question,
+)
 from report_generator import generate_pdf_report
 from demo_data import get_demo_entries, DEMO_STAFF
 
@@ -292,21 +303,57 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /tipsreport            — Formal tip allocation record\n"
         "  /allergens             — Allergen traceability log (Natasha's Law)\n"
         "  /inspection            — FSA inspection readiness report\n\n"
+        "DATA MANAGEMENT:\n"
+        "  /rename NewName        — Rename your restaurant\n"
+        "  /importweek [dates]: [description] — Import historical data\n"
+        "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
+        "HELP & SUPPORT:\n"
+        "  /ask [question]        — AI-powered help (anything about the bot)\n"
+        "  /support [message]     — Contact the support team\n"
+        "  /supportstatus         — Check your support tickets\n\n"
         "Every message from any team member in this group is captured and analysed.\n"
         "Tips and allergen risks are detected and logged automatically.\n\n"
-        "Type /features for a full guide to everything the bot can do."
+        "Type /features for a full guide, or /ask [your question] for instant help."
     )
 
 
 async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /register YourRestaurantName\nExample: /register Joe's Bistro")
+        await update.message.reply_text(
+            "Usage: /register YourRestaurantName\n"
+            "Example: /register Joe's Bistro\n\n"
+            "To change an existing name: /rename NewName\n"
+            "To start completely fresh: /cleardata then /register NewName"
+        )
         return
 
     name = " ".join(context.args)
     chat_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
 
+    existing = get_restaurant_by_group(chat_id)
+
+    if existing:
+        if existing["name"] == name:
+            await update.message.reply_text(
+                f"Already registered as '{name}'. No changes made.\n\n"
+                f"Use /status to see your current data.\n"
+                f"Use /rename NewName to change the name."
+            )
+            return
+
+        # Different name — just rename, keep all data
+        update_restaurant_name(chat_id, name)
+        register_staff(existing["id"], user_id, update.effective_user.first_name or "Owner", "owner")
+        await update.message.reply_text(
+            f"Restaurant renamed to: {name}\n\n"
+            f"All existing entries, invoices and records are preserved.\n"
+            f"Use /status to verify everything looks correct.\n\n"
+            f"If you want to delete all data and start fresh: /cleardata"
+        )
+        return
+
+    # Fresh registration
     register_restaurant(name, chat_id, user_id)
     restaurant = get_restaurant_by_group(chat_id)
     if restaurant:
@@ -317,7 +364,8 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"You are set as the owner.\n\n"
         f"All team members can now just send messages to this group.\n"
         f"Voice notes, photos and texts are all captured automatically.\n\n"
-        f"Try sending a voice note about today's shift!"
+        f"Start by sending a voice note about today's shift.\n"
+        f"Or type /features to see everything the bot can do."
     )
 
 
@@ -445,11 +493,14 @@ async def cmd_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     correction = " ".join(context.args)
     original_text = last["raw_text"] or ""
-    corrected_text = f"{original_text}\n\nCORRECTION: {correction}"
 
-    await update.message.reply_text("Updating your entry with the correction...")
+    await update.message.reply_text("Applying your correction...")
 
-    analysis = analyze_text_entry(corrected_text, restaurant["name"])
+    # Use a dedicated correction prompt — NOT the general analysis prompt.
+    # The general prompt would read the correction as new data, not as a fix.
+    analysis = analyze_correction(original_text, correction, restaurant["name"])
+    # Store the corrected text cleanly — just the original with the fix noted
+    corrected_text = f"{original_text} [corrected: {correction}]"
     update_entry(last["id"], corrected_text, json.dumps(analysis), analysis.get("category", last["category"]))
 
     urgency = analysis.get("urgency", "low")
@@ -596,16 +647,17 @@ async def cmd_recall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_date, end_date = date_range
     entries = get_entries_for_period(restaurant["id"], start_date, end_date)
 
+    period_fmt = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+
     if not entries:
-        period_label = query_text if start_date == end_date else f"{start_date} to {end_date}"
         await update.message.reply_text(
-            f"No entries found for {period_label}.\n"
+            f"No entries found for {period_fmt}.\n"
             "Either no data was recorded then, or it was before this restaurant was registered."
         )
         return
 
     await update.message.reply_text(
-        f"Found {len(entries)} entries for {query_text}. Summarising..."
+        f"Found {len(entries)} entries for {period_fmt}. Summarising..."
     )
 
     # Build entries_data for the recall summary
@@ -626,9 +678,8 @@ async def cmd_recall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     summary = generate_recall_summary(entries_data, query_text, restaurant["name"])
 
-    period_label = start_date if start_date == end_date else f"{start_date} to {end_date}"
     await update.message.reply_text(
-        f"Recall: {restaurant['name']} — {period_label}\n"
+        f"Recall: {restaurant['name']} — {period_fmt}\n"
         f"({len(entries)} entries)\n\n"
         f"{summary}"
     )
@@ -666,7 +717,7 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    period_label = query if start_date == end_date else f"{start_date} to {end_date}"
+    period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
     cost_lines = ""
     if fin["cost_items"]:
         cost_lines = "\nInvoices captured:\n" + "\n".join(
@@ -808,6 +859,398 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Paid date: {date.today().strftime('%-d %B %Y')}\n\n"
         f"Run /outstanding to see remaining unpaid invoices."
     )
+
+
+# ── Data management commands ──────────────────────────────────────────────────
+
+async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rename NewRestaurantName
+    Change the restaurant name without losing any data.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            f"Usage: /rename NewName\n\n"
+            f"Current name: {restaurant['name']}\n"
+            f"Example: /rename Kukua Kitchen"
+        )
+        return
+
+    new_name = " ".join(context.args).strip()
+    chat_id = str(update.effective_chat.id)
+    update_restaurant_name(chat_id, new_name)
+
+    await update.message.reply_text(
+        f"Restaurant renamed.\n\n"
+        f"Was: {restaurant['name']}\n"
+        f"Now: {new_name}\n\n"
+        f"All data is preserved. The new name will appear in all future reports."
+    )
+
+
+async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /cleardata
+    Delete all entries, invoices, and compliance records for this restaurant.
+    Keeps the registration and restaurant name. Requires confirmation.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    # Require explicit confirmation to prevent accidental deletion
+    if not context.args or context.args[0].upper() != "CONFIRM":
+        entry_count = len(get_entries_for_period(
+            restaurant["id"],
+            "2000-01-01",
+            date.today().isoformat(),
+        ))
+        outstanding = get_outstanding_invoices(restaurant["id"])
+        await update.message.reply_text(
+            f"This will permanently delete ALL data for {restaurant['name']}:\n\n"
+            f"  Entries: {entry_count}\n"
+            f"  Unpaid invoices: {len(outstanding)}\n"
+            f"  All tips records, allergen alerts, and weekly reports\n\n"
+            f"The restaurant registration and name are kept.\n\n"
+            f"To confirm, type:\n"
+            f"  /cleardata CONFIRM\n\n"
+            f"This cannot be undone."
+        )
+        return
+
+    clear_all_entries(restaurant["id"])
+    await update.message.reply_text(
+        f"All data cleared for {restaurant['name']}.\n\n"
+        f"Your registration is intact — the bot will continue capturing new messages.\n"
+        f"Use /importweek to backfill historical data if needed."
+    )
+
+
+# ── Help & onboarding commands ────────────────────────────────────────────────
+
+async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /ask [your question]
+    Ask anything about how the bot works. AI-powered help in plain English.
+
+    Examples:
+      /ask how do I fix a wrong entry?
+      /ask how do I record last month's tips?
+      /ask what does the weekly report include?
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Ask me anything about the bot.\n\n"
+            "Examples:\n"
+            "  /ask how do I fix a wrong entry?\n"
+            "  /ask how do I record tips from last week?\n"
+            "  /ask what is the best way to get the weekly report?\n"
+            "  /ask how do I import data from before I started using the bot?\n"
+            "  /ask what does the inspection report cover?"
+        )
+        return
+
+    question = " ".join(context.args)
+    await update.message.reply_text("Looking that up for you...")
+
+    answer = answer_help_question(question, restaurant["name"])
+    await update.message.reply_text(
+        f"Q: {question}\n\n"
+        f"{answer}\n\n"
+        f"Still stuck? /support [describe your problem] to contact the team."
+    )
+
+
+# ── Historical data import ────────────────────────────────────────────────────
+
+async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /importweek [date range]: [description of the week]
+    Import a historical week of data in plain English.
+    The AI creates representative daily entries tagged with the correct dates.
+
+    Format: /importweek 6 Jan 2025 to 12 Jan 2025: [what happened that week]
+
+    Examples:
+      /importweek 6 Jan to 12 Jan 2025: Revenue around £16,000, 480 covers.
+      Bidfood main supplier. Fridge issue Tuesday fixed Thursday.
+      Ahmed late 3 times. New lamb dish launched Friday, sold out both nights.
+
+      /importweek March 2025: Quieter month, about £60,000 total revenue.
+      1,800 covers. Major cost was kitchen refurbishment £4,200.
+      Lost two staff — recruited replacements by end of month.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Import a past week of data in plain English.\n\n"
+            "Format:\n"
+            "  /importweek [date range]: [description]\n\n"
+            "Examples:\n"
+            "  /importweek 6 Jan to 12 Jan 2025: Revenue £16,000, 480 covers.\n"
+            "  Bidfood supplier. Fridge fault Tuesday fixed Thursday.\n\n"
+            "  /importweek March 2025: £60,000 revenue, 1,800 covers.\n"
+            "  Kitchen refurb cost £4,200. Lost 2 staff, replaced by month end.\n\n"
+            "The AI will create dated entries for that week.\n"
+            "Repeat for each week you want to backfill."
+        )
+        return
+
+    full_text = " ".join(context.args)
+
+    # Split on colon to separate date range from description
+    if ":" in full_text:
+        date_part, description = full_text.split(":", 1)
+        date_part = date_part.strip()
+        description = description.strip()
+    else:
+        # Try to parse first few words as dates
+        date_part = full_text[:50]
+        description = full_text
+
+    # Parse the date range
+    # Try "6 Jan to 12 Jan 2025" or "6 Jan 2025 to 12 Jan 2025" or "March 2025"
+    date_range = None
+    # Try "X to Y" format
+    if " to " in date_part.lower():
+        parts = date_part.lower().split(" to ")
+        d1 = _parse_date_range(parts[0].strip())
+        d2 = _parse_date_range(parts[1].strip())
+        if d1 and d2:
+            date_range = (d1[0], d2[1])
+    if not date_range:
+        date_range = _parse_date_range(date_part.strip())
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand the date range \"{date_part}\".\n\n"
+            "Try formats like:\n"
+            "  6 Jan to 12 Jan 2025\n"
+            "  6 January 2025 to 12 January 2025\n"
+            "  March 2025\n"
+            "  last month"
+        )
+        return
+
+    start_date, end_date = date_range
+
+    # Refuse to import into the future
+    if start_date > date.today().isoformat():
+        await update.message.reply_text(
+            f"The date range {_fmt_date(start_date)} is in the future.\n"
+            "You can only import historical data."
+        )
+        return
+
+    await update.message.reply_text(
+        f"Importing data for {_fmt_date(start_date)} to {_fmt_date(end_date)}...\n"
+        f"The AI will create entries from your description."
+    )
+
+    entries = analyze_history_week(description, start_date, end_date, restaurant["name"])
+
+    if not entries:
+        await update.message.reply_text(
+            "Could not create entries from that description. Try adding more detail:\n"
+            "revenue, covers, supplier names, staff issues, equipment problems."
+        )
+        return
+
+    staff = _ensure_staff(restaurant["id"], update.effective_user)
+    saved = 0
+    for e in entries:
+        try:
+            entry_date = e.get("date", start_date)
+            entry_time = e.get("time", "12:00:00")
+            raw_text = e.get("raw_text", description[:200])
+            category = e.get("category", "general")
+            structured = json.dumps({
+                "category": category,
+                "summary": e.get("summary", raw_text[:100]),
+                "revenue": e.get("revenue"),
+                "covers": e.get("covers"),
+                "urgency": e.get("urgency", "low"),
+                "action_needed": False,
+            })
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO daily_entries
+                   (restaurant_id, staff_id, entry_date, entry_time, entry_type,
+                    raw_text, structured_data, category)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (restaurant["id"], staff["id"], entry_date, entry_time,
+                 "text", raw_text, structured, category),
+            )
+            conn.commit()
+            conn.close()
+            saved += 1
+        except Exception as ex:
+            logger.warning("importweek: failed to save entry: %s", ex)
+
+    # Show a summary of what was created
+    summary_lines = [
+        f"  {_fmt_date(e.get('date', start_date))}  [{e.get('category', 'general')}]  {e.get('summary', '')[:60]}"
+        for e in entries
+    ]
+
+    await update.message.reply_text(
+        f"Imported {saved} entries for {_fmt_date(start_date)} to {_fmt_date(end_date)}:\n\n"
+        + "\n".join(summary_lines)
+        + f"\n\nUse /recall to review, or /weeklyreport for an AI analysis.\n"
+        f"Run /importweek again for the next week."
+    )
+
+
+# ── Support ticket system ─────────────────────────────────────────────────────
+
+async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /support [message]
+    Send a message to the Restaurant-IQ support team.
+    They will reply directly in this group when the issue is resolved.
+
+    Examples:
+      /support the /correct command is not fixing the entry
+      /support we have old data from before we registered — how do we clear it?
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /support [describe your problem]\n\n"
+            "Examples:\n"
+            "  /support the correction command is not working\n"
+            "  /support how do we clear demo data from our account?\n"
+            "  /support the weekly report is showing wrong revenue figures\n\n"
+            "The support team will reply to this group directly."
+        )
+        return
+
+    message = " ".join(context.args)
+    chat_id = str(update.effective_chat.id)
+    ticket_id = save_support_ticket(restaurant["id"], chat_id, message)
+
+    # Forward to owner's chat if configured
+    if SUPPORT_CHAT_ID:
+        try:
+            await update.get_bot().send_message(
+                chat_id=SUPPORT_CHAT_ID,
+                text=(
+                    f"SUPPORT TICKET #{ticket_id}\n"
+                    f"Restaurant: {restaurant['name']}\n"
+                    f"Chat ID: {chat_id}\n"
+                    f"From: {update.effective_user.first_name}\n\n"
+                    f"Message:\n{message}\n\n"
+                    f"Reply with: /reply {ticket_id} [your response]"
+                ),
+            )
+        except Exception as e:
+            logger.warning("Could not forward support ticket to owner: %s", e)
+
+    await update.message.reply_text(
+        f"Support ticket #{ticket_id} submitted.\n\n"
+        f"The team has been notified and will reply to this group.\n"
+        f"You can check the status with /supportstatus\n\n"
+        f"For urgent issues, your ticket reference is #{ticket_id}."
+    )
+
+
+async def cmd_supportstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /supportstatus
+    Check the status of your support tickets.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    tickets = get_support_tickets(restaurant["id"])
+
+    if not tickets:
+        await update.message.reply_text(
+            "No support tickets found.\n\n"
+            "Use /support [message] to contact the team."
+        )
+        return
+
+    lines = []
+    for t in tickets:
+        status_icon = "✅" if t["status"] == "resolved" else "🕐"
+        lines.append(f"{status_icon} #{t['id']}  {t['created_at'][:10]}")
+        lines.append(f"   {t['message'][:80]}")
+        if t["owner_reply"]:
+            lines.append(f"   Reply: {t['owner_reply'][:100]}")
+        lines.append("")
+
+    await update.message.reply_text(
+        f"Support Tickets — {restaurant['name']}\n"
+        f"{'─' * 36}\n\n"
+        + "\n".join(lines)
+    )
+
+
+async def cmd_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /reply [ticket_id] [message]
+    Owner-only: reply to a support ticket. The reply is sent to the restaurant's group.
+    Only works when called from the SUPPORT_CHAT_ID.
+    """
+    if not SUPPORT_CHAT_ID:
+        await update.message.reply_text("Support chat ID not configured.")
+        return
+
+    caller_chat = str(update.effective_chat.id)
+    if caller_chat != str(SUPPORT_CHAT_ID):
+        # Silently ignore — don't reveal this command exists to restaurant users
+        return
+
+    if not context.args or len(context.args) < 2 or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "Usage: /reply [ticket_id] [message]\n"
+            "Example: /reply 42 Your data has been cleared — please run /register again."
+        )
+        return
+
+    ticket_id = int(context.args[0])
+    reply_text = " ".join(context.args[1:])
+
+    ticket = get_ticket_by_id(ticket_id)
+    if not ticket:
+        await update.message.reply_text(f"Ticket #{ticket_id} not found.")
+        return
+
+    resolve_support_ticket(ticket_id, reply_text)
+
+    # Send the reply to the restaurant's group
+    try:
+        await update.get_bot().send_message(
+            chat_id=ticket["chat_id"],
+            text=(
+                f"Support update for ticket #{ticket_id}\n"
+                f"{'─' * 30}\n\n"
+                f"Your issue: {ticket['message']}\n\n"
+                f"Response from the Restaurant-IQ team:\n{reply_text}\n\n"
+                f"If this resolves your issue, no further action needed.\n"
+                f"If not, use /support to send a follow-up."
+            ),
+        )
+        await update.message.reply_text(f"Reply sent to {ticket['chat_id']} for ticket #{ticket_id}.")
+    except Exception as e:
+        await update.message.reply_text(f"Could not send reply: {e}")
 
 
 # ── UK Compliance Commands ────────────────────────────────────────────────────
@@ -1512,6 +1955,21 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
 
+    # CRITICAL SAFETY CHECK: refuse if a real restaurant is already registered.
+    # Without this, demo data gets injected directly into the live restaurant.
+    existing = get_restaurant_by_group(chat_id)
+    if existing and existing["name"] != DEMO_RESTAURANT_NAME:
+        await update.message.reply_text(
+            f"This group is already registered as '{existing['name']}'\n\n"
+            f"Loading demo data here would mix fake data with your real records.\n\n"
+            f"To try the demo safely:\n"
+            f"  1. Create a new Telegram group\n"
+            f"  2. Add the bot to that group\n"
+            f"  3. Run /demo there\n\n"
+            f"Your real data in this group is untouched."
+        )
+        return
+
     await update.message.reply_text(
         "Setting up demo data for The Golden Fork...\n"
         "This takes just a second."
@@ -1670,6 +2128,19 @@ def main():
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
     app.add_handler(CommandHandler("features", cmd_features))
+
+    # Data management
+    app.add_handler(CommandHandler("rename", cmd_rename))
+    app.add_handler(CommandHandler("cleardata", cmd_cleardata))
+
+    # Help & onboarding
+    app.add_handler(CommandHandler("ask", cmd_ask))
+    app.add_handler(CommandHandler("importweek", cmd_importweek))
+
+    # Support ticket system
+    app.add_handler(CommandHandler("support", cmd_support))
+    app.add_handler(CommandHandler("supportstatus", cmd_supportstatus))
+    app.add_handler(CommandHandler("reply", cmd_reply))
 
     # UK compliance commands
     app.add_handler(CommandHandler("tips", cmd_tips))

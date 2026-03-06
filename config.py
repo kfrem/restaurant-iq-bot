@@ -34,3 +34,10 @@ GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-2.0-flash")
 # ── Other settings ────────────────────────────────────────────────────────────
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
 DB_PATH            = os.getenv("DB_PATH",            "restaurant_iq.db")
+
+# ── Support system ────────────────────────────────────────────────────────────
+# Set this to the Telegram chat ID where support tickets should be forwarded.
+# This is the app owner's personal Telegram chat or a private support group.
+# Get your chat ID by messaging @userinfobot on Telegram.
+# Leave unset and support tickets are stored in the DB but not forwarded.
+SUPPORT_CHAT_ID = os.getenv("SUPPORT_CHAT_ID")

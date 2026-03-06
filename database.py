@@ -133,6 +133,22 @@ def init_db():
             )
         """)
 
+        # Support tickets — allows restaurants to report issues to the app owner
+        # and receive replies without phone calls.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                chat_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT DEFAULT 'open',
+                owner_reply TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
         conn.commit()
     print("Database initialised.")
 
@@ -478,6 +494,81 @@ def resolve_allergen_alert(alert_id: int) -> bool:
         c.execute("UPDATE allergen_alerts SET resolved = 1 WHERE id = ?", (alert_id,))
         conn.commit()
         return c.rowcount > 0
+
+
+# ── Data management ───────────────────────────────────────────────────────────
+
+def clear_all_entries(restaurant_id: int):
+    """Delete all entries, invoices, tips and allergen alerts for a restaurant.
+    Keeps the restaurant registration and staff records intact."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM allergen_alerts WHERE restaurant_id = ?", (restaurant_id,))
+        c.execute("DELETE FROM tips_log WHERE restaurant_id = ?", (restaurant_id,))
+        c.execute("DELETE FROM invoices WHERE restaurant_id = ?", (restaurant_id,))
+        c.execute("DELETE FROM daily_entries WHERE restaurant_id = ?", (restaurant_id,))
+        c.execute("DELETE FROM weekly_reports WHERE restaurant_id = ?", (restaurant_id,))
+        conn.commit()
+
+
+# ── Support tickets ───────────────────────────────────────────────────────────
+
+def save_support_ticket(restaurant_id: int, chat_id: str, message: str) -> int:
+    """Create a new support ticket from a restaurant."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO support_tickets (restaurant_id, chat_id, message) VALUES (?, ?, ?)",
+            (restaurant_id, chat_id, message),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_support_tickets(restaurant_id: int) -> list:
+    """Return all support tickets for a restaurant, newest first."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT * FROM support_tickets WHERE restaurant_id = ? ORDER BY created_at DESC",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def get_ticket_by_id(ticket_id: int):
+    """Return a single ticket by ID."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM support_tickets WHERE id = ?", (ticket_id,))
+        return c.fetchone()
+
+
+def resolve_support_ticket(ticket_id: int, reply_text: str):
+    """Mark a ticket as resolved and store the owner's reply."""
+    with _db() as conn:
+        c = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute(
+            "UPDATE support_tickets SET status = 'resolved', owner_reply = ?, resolved_at = ? WHERE id = ?",
+            (reply_text, now, ticket_id),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_all_open_tickets() -> list:
+    """Return all open tickets across all restaurants (for owner use)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT t.*, r.name as restaurant_name
+               FROM support_tickets t
+               JOIN restaurants r ON t.restaurant_id = r.id
+               WHERE t.status = 'open'
+               ORDER BY t.created_at ASC""",
+        )
+        return c.fetchall()
 
 
 def get_financial_summary(restaurant_id: int, start_date: str, end_date: str) -> dict:
