@@ -137,7 +137,8 @@ def generate_pdf_report(
     story.append(Paragraph(f"Weekly Intelligence Briefing — {restaurant_name}", styles["subtitle"]))
     story.append(
         Paragraph(
-            f"Period: {week_start} to {week_end} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"Period: {datetime.strptime(week_start, '%Y-%m-%d').strftime('%-d %B %Y')} to "
+            f"{datetime.strptime(week_end, '%Y-%m-%d').strftime('%-d %B %Y')} &nbsp;&nbsp;|&nbsp;&nbsp; "
             f"Generated: {datetime.now().strftime('%d %B %Y at %H:%M')}",
             styles["week_label"],
         )

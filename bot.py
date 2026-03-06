@@ -80,6 +80,16 @@ for _d in [REPORTS_DIR, VOICE_DIR, PHOTO_DIR]:
     os.makedirs(_d, exist_ok=True)
 
 
+def _fmt_date(date_str: str | None) -> str:
+    """Convert YYYY-MM-DD to British format: 6 March 2026. Returns original string on failure."""
+    if not date_str:
+        return "unknown"
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%-d %B %Y")
+    except ValueError:
+        return date_str
+
+
 # ── Month name lookup for /recall date parsing ────────────────────────────────
 
 _MONTHS = {
@@ -485,7 +495,7 @@ async def cmd_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=pdf_file,
             filename=os.path.basename(pdf_path),
-            caption=f"Weekly briefing for {restaurant['name']} — {week_start}",
+            caption=f"Weekly briefing for {restaurant['name']} — {_fmt_date(week_start)}",
         )
 
 
@@ -675,7 +685,7 @@ async def cmd_outstanding(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif days <= 3:
                     flag = f"🟡 Due in {days}d"
                 else:
-                    flag = f"🟢 Due {inv['due_date']}"
+                    flag = f"🟢 Due {_fmt_date(inv['due_date'])}"
             except ValueError:
                 flag = f"Due {due}"
         else:
@@ -739,7 +749,7 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Invoice #{invoice_id} marked as paid.\n"
         f"Supplier: {inv['supplier_name'] or 'Unknown'}\n"
         f"Amount: £{(inv['total_amount'] or 0):.2f}\n"
-        f"Paid date: {date.today()}\n\n"
+        f"Paid date: {date.today().strftime('%-d %B %Y')}\n\n"
         f"Run /outstanding to see remaining unpaid invoices."
     )
 
@@ -988,7 +998,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         supplier = analysis.get("supplier_name") or "Unknown"
         total = analysis.get("total_amount")
         total_str = f"£{total:.2f}" if total else "Not found"
-        due_str = f"\nPayment due: {analysis.get('due_date') or 'defaulting to 30 days'}" if total else ""
+        raw_due = analysis.get("due_date")
+        due_str = f"\nPayment due: {_fmt_date(raw_due) if raw_due else 'defaulting to 30 days'}" if total else ""
 
         await update.message.reply_text(
             f"Invoice / Receipt Captured:\n"
@@ -1074,7 +1085,7 @@ async def _invoice_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             elif days == 0:
                 lines.append(f"🔴 DUE TODAY: {inv['supplier_name']} — £{amount:,.2f} (ID #{inv['id']})")
             else:
-                lines.append(f"🟡 Due in {days} days ({inv['due_date']}): {inv['supplier_name']} — £{amount:,.2f} (ID #{inv['id']})")
+                lines.append(f"🟡 Due in {days} days ({_fmt_date(inv['due_date'])}): {inv['supplier_name']} — £{amount:,.2f} (ID #{inv['id']})")
 
         if lines:
             msg = (
