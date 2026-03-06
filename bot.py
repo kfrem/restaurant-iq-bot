@@ -45,6 +45,7 @@ from database import (
     get_or_register_staff,
     save_entry,
     save_invoice,
+    delete_last_entry,
     get_week_entries,
     get_entries_for_period,
     get_entries_with_staff,
@@ -339,6 +340,29 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{'─' * 36}\n\n"
         f"{body}\n\n"
         f"Total: {len(entries)} entries from {len({e['staff_name'] for e in entries})} team member(s)"
+    )
+
+
+async def cmd_deletelast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /deletelast — remove the sender's most recent entry so they can re-send it correctly.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    staff = _ensure_staff(restaurant["id"], update.effective_user)
+    deleted = delete_last_entry(restaurant["id"], staff["id"])
+
+    if not deleted:
+        await update.message.reply_text("No entries found to delete.")
+        return
+
+    preview = (deleted["raw_text"] or "")[:120]
+    await update.message.reply_text(
+        f"Deleted your last {deleted['entry_type']} entry:\n"
+        f'"{preview}"\n\n'
+        "Now re-send your corrected message."
     )
 
 
@@ -849,7 +873,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'"{text[:200]}"\n\n'
             f"Category: {analysis.get('category', 'general')}\n"
             f"Summary: {summary}\n"
-            f"Urgency: {icon} {urgency}"
+            f"Urgency: {icon} {urgency}\n\n"
+            f"Wrong? Type /deletelast and re-send."
         )
     finally:
         try:
@@ -913,7 +938,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Supplier: {supplier}\n"
             f"Total: {total_str}{due_str}\n"
             f"Summary: {analysis.get('summary', 'Document logged')}\n\n"
-            f"Added to invoices — track with /outstanding"
+            f"Added to invoices — track with /outstanding\n"
+            f"Wrong details? Type /deletelast and re-send a clearer photo."
         )
     finally:
         try:
@@ -948,7 +974,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'"{text[:200]}"\n\n'
         f"Category: {analysis.get('category', 'general')}\n"
         f"Summary: {summary}\n"
-        f"Urgency: {icon} {urgency}"
+        f"Urgency: {icon} {urgency}\n\n"
+        f"Wrong? Type /deletelast and re-send."
     )
 
 
@@ -1162,6 +1189,7 @@ def main():
     app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("deletelast", cmd_deletelast))
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
     app.add_handler(CommandHandler("recall", cmd_recall))
     app.add_handler(CommandHandler("financials", cmd_financials))

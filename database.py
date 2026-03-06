@@ -190,6 +190,27 @@ def save_entry(restaurant_id: int, staff_id: int, entry_type: str,
         return c.lastrowid
 
 
+def delete_last_entry(restaurant_id: int, staff_id: int):
+    """
+    Delete the most recent entry by this staff member in this restaurant.
+    Returns the deleted entry's raw_text (for confirmation), or None if nothing found.
+    """
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT id, raw_text, entry_type FROM daily_entries
+               WHERE restaurant_id = ? AND staff_id = ?
+               ORDER BY id DESC LIMIT 1""",
+            (restaurant_id, staff_id),
+        )
+        row = c.fetchone()
+        if not row:
+            return None
+        c.execute("DELETE FROM daily_entries WHERE id = ?", (row["id"],))
+        conn.commit()
+        return {"id": row["id"], "raw_text": row["raw_text"], "entry_type": row["entry_type"]}
+
+
 def get_entries_for_period(restaurant_id: int, start_date: str, end_date: str):
     with _db() as conn:
         c = conn.cursor()
