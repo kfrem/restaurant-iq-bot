@@ -190,6 +190,32 @@ def save_entry(restaurant_id: int, staff_id: int, entry_type: str,
         return c.lastrowid
 
 
+def get_last_entry(restaurant_id: int, staff_id: int):
+    """Return the most recent entry by this staff member, or None."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM daily_entries
+               WHERE restaurant_id = ? AND staff_id = ?
+               ORDER BY id DESC LIMIT 1""",
+            (restaurant_id, staff_id),
+        )
+        return c.fetchone()
+
+
+def update_entry(entry_id: int, raw_text: str, structured_data: str, category: str):
+    """Overwrite an entry's text and AI analysis (used by /correct)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """UPDATE daily_entries
+               SET raw_text = ?, structured_data = ?, category = ?
+               WHERE id = ?""",
+            (raw_text, structured_data, category, entry_id),
+        )
+        conn.commit()
+
+
 def delete_last_entry(restaurant_id: int, staff_id: int):
     """
     Delete the most recent entry by this staff member in this restaurant.

@@ -45,6 +45,8 @@ from database import (
     get_or_register_staff,
     save_entry,
     save_invoice,
+    get_last_entry,
+    update_entry,
     delete_last_entry,
     get_week_entries,
     get_entries_for_period,
@@ -340,6 +342,61 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{'─' * 36}\n\n"
         f"{body}\n\n"
         f"Total: {len(entries)} entries from {len({e['staff_name'] for e in entries})} team member(s)"
+    )
+
+
+async def cmd_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /correct [correction text]
+    Fix a specific detail in the sender's last entry without re-sending the whole thing.
+    The correction is appended to the original text and the AI re-analyses the combined version.
+
+    Example:
+      /correct the beef price was £450 not £540
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /correct [what needs fixing]\n\n"
+            "Example:\n"
+            "  /correct the beef was £450 not £540\n"
+            "  /correct supplier was City Farm not Fresh Greens\n\n"
+            "This updates your last entry without re-sending the whole thing."
+        )
+        return
+
+    staff = _ensure_staff(restaurant["id"], update.effective_user)
+    last = get_last_entry(restaurant["id"], staff["id"])
+
+    if not last:
+        await update.message.reply_text(
+            "No previous entry found to correct. Send your full message first."
+        )
+        return
+
+    correction = " ".join(context.args)
+    original_text = last["raw_text"] or ""
+    corrected_text = f"{original_text}\n\nCORRECTION: {correction}"
+
+    await update.message.reply_text("Updating your entry with the correction...")
+
+    analysis = analyze_text_entry(corrected_text, restaurant["name"])
+    update_entry(last["id"], corrected_text, json.dumps(analysis), analysis.get("category", last["category"]))
+
+    urgency = analysis.get("urgency", "low")
+    icon = URGENCY_ICONS.get(urgency, "⚪")
+    summary = analysis.get("summary", corrected_text[:100])
+
+    await update.message.reply_text(
+        f"Entry updated with your correction.\n\n"
+        f"Correction applied: {correction}\n\n"
+        f"New summary: {summary}\n"
+        f"Category: {analysis.get('category', 'general')}\n"
+        f"Urgency: {icon} {urgency}\n\n"
+        f"Still wrong? Use /correct again or /deletelast to start over."
     )
 
 
@@ -874,7 +931,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Category: {analysis.get('category', 'general')}\n"
             f"Summary: {summary}\n"
             f"Urgency: {icon} {urgency}\n\n"
-            f"Wrong? Type /deletelast and re-send."
+            f"Wrong detail? /correct the beef was £450 not £540\nWrong entry? /deletelast and re-send."
         )
     finally:
         try:
@@ -939,7 +996,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Total: {total_str}{due_str}\n"
             f"Summary: {analysis.get('summary', 'Document logged')}\n\n"
             f"Added to invoices — track with /outstanding\n"
-            f"Wrong details? Type /deletelast and re-send a clearer photo."
+            f"Wrong amount or supplier? /correct the total was £340 not £430\n"
+            f"Wrong photo entirely? /deletelast and re-send a clearer one."
         )
     finally:
         try:
@@ -975,7 +1033,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Category: {analysis.get('category', 'general')}\n"
         f"Summary: {summary}\n"
         f"Urgency: {icon} {urgency}\n\n"
-        f"Wrong? Type /deletelast and re-send."
+        f"Wrong detail? /correct the beef was £450 not £540\nWrong entry? /deletelast and re-send."
     )
 
 
@@ -1189,6 +1247,7 @@ def main():
     app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("correct", cmd_correct))
     app.add_handler(CommandHandler("deletelast", cmd_deletelast))
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
     app.add_handler(CommandHandler("recall", cmd_recall))
