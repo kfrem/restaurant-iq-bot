@@ -96,6 +96,43 @@ def init_db():
             )
         """)
 
+        # Tips Act compliance log — Employment (Allocation of Tips) Act 2023.
+        # Every tip event detected from voice/text/photo is recorded here.
+        # Restaurants must keep 3-year records and allow staff to request them.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS tips_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                entry_id INTEGER,
+                event_date TEXT NOT NULL,
+                shift TEXT,
+                tip_type TEXT DEFAULT 'card',
+                gross_amount REAL,
+                staff_notes TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (entry_id) REFERENCES daily_entries(id)
+            )
+        """)
+
+        # Allergen alerts — Natasha's Law (2021) traceability log.
+        # Flagged whenever a supplier change or ingredient substitution is detected.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS allergen_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                entry_id INTEGER,
+                alert_date TEXT NOT NULL,
+                supplier_name TEXT,
+                product_name TEXT,
+                allergen_concern TEXT,
+                resolved INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (entry_id) REFERENCES daily_entries(id)
+            )
+        """)
+
         conn.commit()
     print("Database initialised.")
 
@@ -353,6 +390,94 @@ def get_invoices_due_soon(days_ahead: int = 3) -> list:
             (cutoff,),
         )
         return c.fetchall()
+
+
+# ── Tips Act compliance ───────────────────────────────────────────────────────
+
+def save_tip_event(restaurant_id: int, entry_id: int, event_date: str,
+                   shift: str, tip_type: str, gross_amount: float, staff_notes: str):
+    """Record a tip event for Tips Act compliance. Called whenever tips are detected."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO tips_log
+               (restaurant_id, entry_id, event_date, shift, tip_type, gross_amount, staff_notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, entry_id, event_date, shift, tip_type, gross_amount, staff_notes),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_tips_for_period(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """Return all tip events in a date range."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM tips_log
+               WHERE restaurant_id = ? AND event_date BETWEEN ? AND ?
+               ORDER BY event_date, created_at""",
+            (restaurant_id, start_date, end_date),
+        )
+        return c.fetchall()
+
+
+def get_tips_summary(restaurant_id: int, start_date: str, end_date: str) -> dict:
+    """Aggregate tip totals for a period, split by type (card/cash)."""
+    events = get_tips_for_period(restaurant_id, start_date, end_date)
+    totals = {"card": 0.0, "cash": 0.0, "unknown": 0.0, "events": len(events)}
+    for t in events:
+        tip_type = (t["tip_type"] or "unknown").lower()
+        amount = t["gross_amount"] or 0.0
+        if tip_type in totals:
+            totals[tip_type] += amount
+        else:
+            totals["unknown"] += amount
+    totals["total"] = round(totals["card"] + totals["cash"] + totals["unknown"], 2)
+    totals["card"] = round(totals["card"], 2)
+    totals["cash"] = round(totals["cash"], 2)
+    totals["unknown"] = round(totals["unknown"], 2)
+    return totals
+
+
+# ── Allergen alerts ───────────────────────────────────────────────────────────
+
+def save_allergen_alert(restaurant_id: int, entry_id: int, alert_date: str,
+                        supplier_name: str, product_name: str, allergen_concern: str):
+    """Record a Natasha's Law allergen traceability alert."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO allergen_alerts
+               (restaurant_id, entry_id, alert_date, supplier_name, product_name, allergen_concern)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, entry_id, alert_date, supplier_name, product_name, allergen_concern),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_allergen_alerts(restaurant_id: int, days_back: int = 90) -> list:
+    """Return recent allergen alerts for a restaurant."""
+    with _db() as conn:
+        c = conn.cursor()
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        c.execute(
+            """SELECT * FROM allergen_alerts
+               WHERE restaurant_id = ? AND alert_date >= ?
+               ORDER BY alert_date DESC""",
+            (restaurant_id, cutoff),
+        )
+        return c.fetchall()
+
+
+def resolve_allergen_alert(alert_id: int) -> bool:
+    """Mark an allergen alert as reviewed and resolved."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE allergen_alerts SET resolved = 1 WHERE id = ?", (alert_id,))
+        conn.commit()
+        return c.rowcount > 0
 
 
 def get_financial_summary(restaurant_id: int, start_date: str, end_date: str) -> dict:

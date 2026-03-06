@@ -83,8 +83,18 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
   "complaints": [],
   "positive_notes": [],
   "action_needed": false,
-  "urgency": "low|medium|high"
-}}"""
+  "urgency": "low|medium|high",
+  "tips_detected": false,
+  "tip_amount": null,
+  "tip_type": null,
+  "allergen_risk": false,
+  "allergen_detail": null
+}}
+
+Tips detection: set tips_detected=true if the message mentions tips, gratuities, service charge, or tronc.
+  Extract tip_amount (number, £) and tip_type ("card", "cash", or "both") if mentioned.
+Allergen risk: set allergen_risk=true if a supplier change, ingredient substitution, or new product is mentioned
+  that could affect food allergen declarations. Describe the concern in allergen_detail."""
 
 
 def _image_prompt(restaurant_name: str) -> str:
@@ -104,11 +114,20 @@ Return ONLY valid JSON — no markdown, no explanation:
   "items": [
     {{"name": "", "quantity": null, "unit": "", "unit_price": null, "total": null}}
   ],
-  "summary": "one line summary"
+  "summary": "one line summary",
+  "allergen_risk": false,
+  "allergen_detail": null,
+  "tips_detected": false,
+  "tip_amount": null,
+  "tip_type": null
 }}
 
 For due_date: if payment terms are shown (e.g. "Net 30", "30 days"), calculate the due date from the invoice date and return as YYYY-MM-DD.
-If no terms shown, return null for both due_date and payment_terms."""
+If no terms shown, return null for both due_date and payment_terms.
+Allergen risk: set allergen_risk=true if this invoice shows a new supplier, a substituted product, or a product
+  whose ingredients could affect allergen declarations (e.g. different butter brand, new flour supplier).
+  Describe the concern in allergen_detail.
+Tips: set tips_detected=true only if the document is a tips/tronc distribution sheet."""
 
 
 def _report_prompt(entries_summary: list, restaurant_name: str,
@@ -525,6 +544,170 @@ def generate_report(entries_data: list, restaurant_name: str,
             f"{user_msg}\n\n"
             f"Entries captured this week: {len(entries_data)}.\n"
             f"Current AI tier: {tier['label']}."
+        )
+
+
+def generate_tips_report(tips_events: list, summary: dict,
+                         restaurant_name: str, period_label: str) -> str:
+    """
+    Generate a Tips Act compliant monthly allocation record.
+    Employment (Allocation of Tips) Act 2023 — in force October 2024.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    events_block = ""
+    if tips_events:
+        lines = []
+        for t in tips_events:
+            lines.append(
+                f"  {t.get('event_date')}  {t.get('shift', 'unspecified shift')}  "
+                f"{t.get('tip_type', 'unknown').upper()}  "
+                f"£{t.get('gross_amount') or 0:.2f}  "
+                f"Notes: {t.get('staff_notes', '') or 'none'}"
+            )
+        events_block = "\n".join(lines)
+    else:
+        events_block = "  No individual tip events recorded for this period."
+
+    prompt = f"""You are Restaurant-IQ, generating a Tips Act compliance record for "{restaurant_name}".
+
+UK LAW CONTEXT (Employment (Allocation of Tips) Act 2023, in force October 2024):
+- Employers must pass 100% of customer tips to workers, with no deductions.
+- A written tips policy is required.
+- Records must be kept for 3 years and provided to any worker who requests them.
+- Workers can request their tip allocation records at any time.
+
+PERIOD: {period_label}
+
+RECORDED TIP EVENTS:
+{events_block}
+
+PERIOD TOTALS:
+  Card tips:    £{summary.get('card', 0):.2f}
+  Cash tips:    £{summary.get('cash', 0):.2f}
+  Type unknown: £{summary.get('unknown', 0):.2f}
+  TOTAL:        £{summary.get('total', 0):.2f}
+  Events logged: {summary.get('events', 0)}
+
+Write a formal compliance record with these sections:
+
+## TIPS ALLOCATION RECORD — {restaurant_name.upper()}
+## Period: {period_label}
+
+### Summary
+Total tips received, split by type, and number of recorded events.
+
+### Allocation Events
+List each event from the data above in a clear table format.
+
+### Compliance Statement
+A short statement confirming tips policy compliance under the Employment (Allocation of Tips) Act 2023.
+Include: tips passed to staff in full, method of allocation, record retention commitment.
+
+### Action Items
+Any gaps in records or steps needed to ensure full compliance.
+
+Note: Be specific about the legal requirements. This document may be requested by any staff member.
+Use £ for all currency. Plain text format, no filler."""
+
+    try:
+        if provider == "groq":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        elif provider == "claude":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        else:
+            return _TEXT_FN[provider](prompt).strip()
+    except Exception as e:
+        logger.error("generate_tips_report error (%s): %s", provider, e)
+        return (
+            f"## TIPS ALLOCATION RECORD — {restaurant_name.upper()}\n"
+            f"Period: {period_label}\n\n"
+            f"Total tips recorded: £{summary.get('total', 0):.2f} across {summary.get('events', 0)} events.\n"
+            f"Card: £{summary.get('card', 0):.2f}  |  Cash: £{summary.get('cash', 0):.2f}\n\n"
+            f"Raw events:\n{events_block}\n\n"
+            f"Note: AI report generation failed — raw data shown above for manual record-keeping."
+        )
+
+
+def generate_inspection_report(entries_data: list, restaurant_name: str) -> str:
+    """
+    Generate a Food Standards Agency inspection preparation report.
+    Groups all compliance-relevant entries: supplier changes, equipment faults,
+    temperature incidents, cleaning issues, staff incidents, allergen alerts.
+    """
+    tier = _select_tier()
+    provider = tier["provider"]
+
+    lines = []
+    for e in entries_data:
+        line = f"[{e.get('date')} {e.get('time', '')}]"
+        if e.get("analysis") and e["analysis"].get("summary"):
+            line += f" {e['analysis']['summary']}"
+        else:
+            line += f" {(e.get('raw_text') or '')[:200]}"
+        category = (e.get("analysis") or {}).get("category", e.get("category", "general"))
+        line += f"  [cat:{category}]"
+        lines.append(line)
+
+    entries_block = "\n".join(lines) if lines else "No entries found."
+
+    prompt = f"""You are Restaurant-IQ, preparing an inspection readiness report for "{restaurant_name}".
+UK Food Standards Agency (FSA) inspectors assess: food safety management, structural condition,
+confidence in management. They award a 0-5 star Food Hygiene Rating (public-facing).
+
+These are all operational entries recorded in the last 90 days:
+
+{entries_block}
+
+Write a FOOD HYGIENE INSPECTION READINESS REPORT:
+
+## INSPECTION READINESS — {restaurant_name.upper()}
+## Generated: today
+
+### Overall Readiness Assessment
+A brief verdict: Ready / Needs Attention / Action Required. 1-2 sentences.
+
+### Supplier Traceability Log
+List all supplier changes, new suppliers, and delivery issues from the entries.
+EHOs ask for evidence of approved supplier lists and traceability records.
+
+### Equipment & Maintenance Log
+List all equipment faults, repairs, and safety-related issues with dates.
+EHOs check temperature control equipment, pest control, cleaning records.
+
+### Staff & Training Notes
+Any staff incidents, training mentions, or hygiene observations from entries.
+
+### Temperature & Food Safety Incidents
+Any temperature concerns, cold chain issues, or food safety incidents.
+
+### Allergen Traceability
+Any supplier changes or ingredient substitutions that could affect allergen declarations.
+Reference Natasha's Law requirements.
+
+### Gaps in Documentation
+What the EHO would likely flag as missing based on these records.
+Be direct — gaps in records cost hygiene rating points.
+
+### Pre-Inspection Action List
+Numbered list of specific steps to take before the next inspection.
+
+Use plain text, be direct, reference UK FSA inspection criteria where relevant."""
+
+    try:
+        if provider == "groq":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        elif provider == "claude":
+            return _TEXT_FN[provider](prompt, tier["text_model"]).strip()
+        else:
+            return _TEXT_FN[provider](prompt).strip()
+    except Exception as e:
+        logger.error("generate_inspection_report error (%s): %s", provider, e)
+        return (
+            f"## INSPECTION READINESS — {restaurant_name.upper()}\n\n"
+            f"AI report generation failed. Raw entries for manual review:\n\n"
+            f"{entries_block}"
         )
 
 

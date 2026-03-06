@@ -4,21 +4,28 @@ Restaurant-IQ Telegram Bot
 Entry point. Run with:  python bot.py
 
 Handles:
-  - /start          — welcome message
-  - /register       — register this Telegram group as a restaurant
-  - /status         — show entries captured this week
-  - /weeklyreport   — generate and send the weekly intelligence briefing
-  - /recall [date]  — recall what was recorded on a specific date or period
-  - /financials     — P&L and cashflow summary for any period
-  - /outstanding    — list all unpaid invoices with due dates
-  - /markpaid [id]  — mark an invoice as paid
-  - /demo           — load a realistic week of demo data for client presentations
-  - /demoreset      — remove all demo data from this chat
+  - /start              — welcome message
+  - /register           — register this Telegram group as a restaurant
+  - /status             — show entries captured this week
+  - /weeklyreport       — generate and send the weekly intelligence briefing
+  - /recall [date]      — recall what was recorded on a specific date or period
+  - /financials         — P&L and cashflow summary for any period
+  - /outstanding        — list all unpaid invoices with due dates
+  - /markpaid [id]      — mark an invoice as paid
+  - /demo               — load a realistic week of demo data for client presentations
+  - /demoreset          — remove all demo data from this chat
+
+UK Legal Compliance (unique to Restaurant-IQ):
+  - /tips [period]      — tip events log (Employment (Allocation of Tips) Act 2023)
+  - /tipsreport         — formal Tips Act compliance record (3-year retention duty)
+  - /allergens          — allergen traceability log (Natasha's Law / FSA)
+  - /resolvallergen [id]— mark an allergen alert as reviewed and resolved
+  - /inspection         — FSA Food Hygiene inspection readiness report (90-day analysis)
 
 Message types:
-  - Voice notes  → transcribed by Whisper → analysed by AI
-  - Photos       → analysed by AI vision (invoice/receipt reading)
-  - Text         → analysed by AI fast model
+  - Voice notes  → transcribed by Whisper → analysed by AI → tips/allergens auto-logged
+  - Photos       → analysed by AI vision (invoice/receipt reading) → allergens auto-flagged
+  - Text         → analysed by AI fast model → tips/allergens auto-logged
 """
 
 import os
@@ -57,10 +64,16 @@ from database import (
     get_financial_summary,
     save_weekly_report,
     get_connection,
+    save_tip_event,
+    get_tips_for_period,
+    get_tips_summary,
+    save_allergen_alert,
+    get_allergen_alerts,
+    resolve_allergen_alert,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
-from model_router import get_tier_status, generate_recall_summary
+from model_router import get_tier_status, generate_recall_summary, generate_tips_report, generate_inspection_report
 from report_generator import generate_pdf_report
 from demo_data import get_demo_entries, DEMO_STAFF
 
@@ -215,6 +228,43 @@ def _default_due_date(invoice_date: str | None, payment_terms: str | None) -> st
     return str(base + timedelta(days=days))
 
 
+# ── Compliance auto-logging ───────────────────────────────────────────────────
+
+def _auto_log_compliance(restaurant_id: int, entry_id: int, analysis: dict, entry_date: str):
+    """
+    After every entry is saved, check AI analysis for tips and allergen flags.
+    Log them to the relevant compliance tables automatically.
+    Called from handle_voice, handle_photo, and handle_text.
+    """
+    # Tips Act compliance
+    if analysis.get("tips_detected"):
+        try:
+            amount = float(analysis.get("tip_amount") or 0)
+            tip_type = analysis.get("tip_type") or "unknown"
+            notes = analysis.get("summary", "")
+            save_tip_event(
+                restaurant_id, entry_id, entry_date,
+                shift=None, tip_type=tip_type,
+                gross_amount=amount, staff_notes=notes,
+            )
+            logger.info("Tips Act: logged tip event £%.2f (%s) for restaurant %d", amount, tip_type, restaurant_id)
+        except Exception as e:
+            logger.warning("Failed to log tip event: %s", e)
+
+    # Allergen alert (Natasha's Law)
+    if analysis.get("allergen_risk"):
+        try:
+            save_allergen_alert(
+                restaurant_id, entry_id, entry_date,
+                supplier_name=analysis.get("supplier_name") or analysis.get("supplier_mentions", [None])[0] if analysis.get("supplier_mentions") else None,
+                product_name=None,
+                allergen_concern=analysis.get("allergen_detail") or "Possible allergen impact — review required",
+            )
+            logger.info("Allergen alert logged for restaurant %d: %s", restaurant_id, analysis.get("allergen_detail"))
+        except Exception as e:
+            logger.warning("Failed to log allergen alert: %s", e)
+
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,7 +287,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "INVOICES:\n"
         "  /outstanding           — List unpaid invoices\n"
         "  /markpaid 12           — Mark invoice #12 as paid\n\n"
-        "Every message from any team member in this group is captured and analysed.\n\n"
+        "UK LEGAL COMPLIANCE:\n"
+        "  /tips                  — Tips log (Tips Act 2023)\n"
+        "  /tipsreport            — Formal tip allocation record\n"
+        "  /allergens             — Allergen traceability log (Natasha's Law)\n"
+        "  /inspection            — FSA inspection readiness report\n\n"
+        "Every message from any team member in this group is captured and analysed.\n"
+        "Tips and allergen risks are detected and logged automatically.\n\n"
         "Type /features for a full guide to everything the bot can do."
     )
 
@@ -754,6 +810,293 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── UK Compliance Commands ────────────────────────────────────────────────────
+
+async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /tips [period]
+    Show tip events logged for a period. Defaults to current month.
+    Employment (Allocation of Tips) Act 2023 — restaurants must keep 3-year records.
+
+    Examples:
+      /tips               — this month
+      /tips last month    — previous calendar month
+      /tips March 2026    — specific month
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    query = " ".join(context.args).strip() if context.args else "this month"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this month, last month, March 2026"
+        )
+        return
+
+    start_date, end_date = date_range
+    events = get_tips_for_period(restaurant["id"], start_date, end_date)
+    summary = get_tips_summary(restaurant["id"], start_date, end_date)
+
+    period_label = query if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+
+    if not events:
+        await update.message.reply_text(
+            f"Tips Log — {restaurant['name']}\n"
+            f"Period: {period_label}\n\n"
+            f"No tip events recorded for this period.\n\n"
+            f"Tips are logged automatically when your team mentions them in voice notes or messages.\n"
+            f"Example: \"Service tonight was great — card tips came to about £180\"\n\n"
+            f"Use /tipsreport to generate a compliance record."
+        )
+        return
+
+    lines = []
+    for t in events:
+        amount = t["gross_amount"] or 0
+        tip_type = (t["tip_type"] or "unknown").upper()
+        shift = t["shift"] or "unspecified shift"
+        lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  £{amount:.2f}  ({shift})")
+
+    events_text = "\n".join(lines)
+
+    await update.message.reply_text(
+        f"Tips Log — {restaurant['name']}\n"
+        f"Period: {period_label}\n"
+        f"{'─' * 40}\n\n"
+        f"Card tips:    £{summary['card']:>8,.2f}\n"
+        f"Cash tips:    £{summary['cash']:>8,.2f}\n"
+        f"Unknown type: £{summary['unknown']:>8,.2f}\n"
+        f"{'─' * 40}\n"
+        f"Total:        £{summary['total']:>8,.2f}\n\n"
+        f"Events ({len(events)}):\n{events_text}\n\n"
+        f"Legal requirement: 100% of tips must be passed to staff.\n"
+        f"Records must be kept for 3 years (Tips Act 2023).\n"
+        f"Use /tipsreport to generate a formal compliance record."
+    )
+
+
+async def cmd_tipsreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /tipsreport [period]
+    Generate a formal Tips Act compliance record for any period.
+    Required under Employment (Allocation of Tips) Act 2023.
+
+    Examples:
+      /tipsreport            — current month
+      /tipsreport last month — previous month
+      /tipsreport March 2026 — specific month
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    query = " ".join(context.args).strip() if context.args else "this month"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this month, last month, March 2026"
+        )
+        return
+
+    start_date, end_date = date_range
+    events = get_tips_for_period(restaurant["id"], start_date, end_date)
+    summary = get_tips_summary(restaurant["id"], start_date, end_date)
+
+    period_label = f"{_fmt_date(start_date)} to {_fmt_date(end_date)}" if start_date != end_date else _fmt_date(start_date)
+
+    await update.message.reply_text(
+        f"Generating Tips Act compliance record for {period_label}...\n"
+        f"({len(events)} events, £{summary['total']:.2f} total)"
+    )
+
+    events_as_dicts = [dict(e) for e in events]
+    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label)
+
+    header = (
+        f"TIPS ACT COMPLIANCE RECORD\n"
+        f"Employment (Allocation of Tips) Act 2023\n"
+        f"{'=' * 38}\n\n"
+    )
+    full_message = header + report
+
+    if len(full_message) <= 4096:
+        await update.message.reply_text(full_message)
+    else:
+        await update.message.reply_text(full_message[:4000] + "\n\n[Full record — save this message]")
+
+    await update.message.reply_text(
+        "This record satisfies your duty to maintain tip allocation records.\n"
+        "Keep records for 3 years. Any staff member may request their record at any time.\n\n"
+        "To add tips not yet captured: send a voice note or text mentioning the tip amount.\n"
+        "Example: \"Last Tuesday card tips were £95 — all passed to staff via Tronc\""
+    )
+
+
+async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /inspection
+    Generate an FSA Food Hygiene inspection readiness report from the last 90 days of entries.
+    Covers: supplier traceability, equipment logs, allergen alerts, staff incidents, compliance gaps.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    today_str = date.today().isoformat()
+    cutoff_str = (date.today() - timedelta(days=90)).isoformat()
+    entries = get_entries_with_staff(restaurant["id"], cutoff_str, today_str)
+
+    if not entries:
+        await update.message.reply_text(
+            "No entries found in the last 90 days.\n\n"
+            "Inspection readiness requires operational history.\n"
+            "Start sending daily voice notes, invoice photos, and shift updates\n"
+            "and your inspection record will build automatically."
+        )
+        return
+
+    await update.message.reply_text(
+        f"Generating inspection readiness report from {len(entries)} entries (last 90 days)...\n"
+        "Analysing for: supplier traceability, equipment issues, allergen flags, staff records."
+    )
+
+    entries_data = []
+    for e in entries:
+        item = {
+            "date": e["entry_date"],
+            "time": e["entry_time"],
+            "type": e["entry_type"],
+            "raw_text": e["raw_text"] or "",
+            "category": e["category"],
+        }
+        if e["structured_data"]:
+            try:
+                item["analysis"] = json.loads(e["structured_data"])
+            except json.JSONDecodeError:
+                pass
+        entries_data.append(item)
+
+    report = generate_inspection_report(entries_data, restaurant["name"])
+
+    # Also append open allergen alerts
+    open_alerts = [a for a in get_allergen_alerts(restaurant["id"], days_back=90) if not a["resolved"]]
+    if open_alerts:
+        alert_lines = "\n".join(
+            f"  #{a['id']} {_fmt_date(a['alert_date'])}  {a['allergen_concern'] or 'Allergen concern'}"
+            for a in open_alerts
+        )
+        report += f"\n\n---\nOpen Allergen Alerts ({len(open_alerts)}):\n{alert_lines}\nResolve with: /resolvallergen [id]"
+
+    header = (
+        f"FSA INSPECTION READINESS — {restaurant['name'].upper()}\n"
+        f"Based on entries: {_fmt_date(cutoff_str)} to {_fmt_date(today_str)}\n"
+        f"{'=' * 38}\n\n"
+    )
+    full_message = header + report
+
+    if len(full_message) <= 4096:
+        await update.message.reply_text(full_message)
+    else:
+        await update.message.reply_text(full_message[:4000] + "\n\n[Continued — save this report]")
+        if len(full_message) > 4000:
+            await update.message.reply_text(full_message[4000:8000])
+
+
+async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /allergens
+    Show all unresolved allergen alerts from the last 90 days.
+    Flagged automatically when supplier changes or ingredient substitutions are detected.
+    Natasha's Law requires restaurants to maintain allergen traceability records.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    alerts = get_allergen_alerts(restaurant["id"], days_back=90)
+    open_alerts = [a for a in alerts if not a["resolved"]]
+    resolved_alerts = [a for a in alerts if a["resolved"]]
+
+    if not alerts:
+        await update.message.reply_text(
+            f"Allergen Alerts — {restaurant['name']}\n\n"
+            "No allergen alerts in the last 90 days.\n\n"
+            "Alerts are raised automatically when the AI detects:\n"
+            "  - A supplier change or new supplier on an invoice\n"
+            "  - An ingredient substitution mentioned in voice notes\n"
+            "  - A new product that could affect your allergen declarations\n\n"
+            "Natasha's Law: you must keep allergen traceability records and\n"
+            "update allergen declarations when ingredients change."
+        )
+        return
+
+    lines = []
+    if open_alerts:
+        lines.append(f"OPEN ALERTS ({len(open_alerts)}) — action required:")
+        for a in open_alerts:
+            supplier = a["supplier_name"] or "unknown supplier"
+            concern = a["allergen_concern"] or "Allergen concern — review required"
+            lines.append(f"\n  #{a['id']}  {_fmt_date(a['alert_date'])}")
+            lines.append(f"  Supplier: {supplier}")
+            lines.append(f"  Concern: {concern}")
+            lines.append(f"  Resolve: /resolvallergen {a['id']}")
+
+    if resolved_alerts:
+        lines.append(f"\n\nRESOLVED ({len(resolved_alerts)}) — kept for traceability record:")
+        for a in resolved_alerts:
+            lines.append(f"  #{a['id']}  {_fmt_date(a['alert_date'])}  {a['allergen_concern'] or 'Resolved'[:60]}")
+
+    await update.message.reply_text(
+        f"Allergen Traceability Log — {restaurant['name']}\n"
+        f"Last 90 days\n"
+        f"{'─' * 40}\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        "Natasha's Law: update your allergen declarations whenever\n"
+        "a supplier, product, or ingredient changes.\n"
+        "Use /inspection for a full inspection readiness report."
+    )
+
+
+async def cmd_resolvallergen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /resolvallergen [id]
+    Mark an allergen alert as reviewed and resolved.
+    Get IDs from /allergens.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "Usage: /resolvallergen [alert id]\n\n"
+            "Get alert IDs from /allergens"
+        )
+        return
+
+    alert_id = int(context.args[0])
+    updated = resolve_allergen_alert(alert_id)
+
+    if updated:
+        await update.message.reply_text(
+            f"Allergen alert #{alert_id} marked as resolved.\n\n"
+            "This alert is retained in your traceability record (Natasha's Law).\n"
+            "Ensure your allergen declarations have been updated if this involved\n"
+            "a supplier or ingredient change."
+        )
+    else:
+        await update.message.reply_text(
+            f"Alert #{alert_id} not found. Check the ID with /allergens"
+        )
+
+
 # ── Features guide ────────────────────────────────────────────────────────────
 
 async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -866,6 +1209,41 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  Run /demoreset to clear it when done."
     )
 
+    # Message 3b: UK compliance commands
+    await update.message.reply_text(
+        "UK LEGAL COMPLIANCE COMMANDS\n"
+        "══════════════════════════════\n\n"
+        "These features are unique to Restaurant-IQ and built specifically\n"
+        "for UK legal requirements that every restaurant must meet.\n\n"
+        "/tips [period]\n"
+        "  Show all tip events logged for a period (default: this month).\n"
+        "  Tips are detected automatically from voice notes and messages.\n"
+        "  Employment (Allocation of Tips) Act 2023: 100% of tips must go\n"
+        "  to staff. Records must be kept for 3 years.\n"
+        "  Try: /tips   /tips last month   /tips March 2026\n\n"
+        "/tipsreport [period]\n"
+        "  Generate a formal Tips Act compliance record.\n"
+        "  Any staff member can request this record. Have it ready.\n"
+        "  Try: /tipsreport   /tipsreport last month\n\n"
+        "/allergens\n"
+        "  Allergen traceability log for the last 90 days.\n"
+        "  Alerts are raised automatically when the AI detects a supplier\n"
+        "  change, ingredient substitution, or new product on an invoice.\n"
+        "  Natasha's Law: you must update allergen declarations when\n"
+        "  ingredients or suppliers change. Unlimited fines for failures.\n\n"
+        "/resolvallergen [id]\n"
+        "  Mark an allergen alert as reviewed and resolved.\n"
+        "  Resolved alerts remain in your traceability record.\n\n"
+        "/inspection\n"
+        "  FSA Food Hygiene inspection readiness report.\n"
+        "  Analyses your last 90 days of entries and produces a structured\n"
+        "  report covering: supplier traceability, equipment logs, temperature\n"
+        "  incidents, allergen flags, staff records, and compliance gaps.\n"
+        "  EHOs look for exactly this documentation — a 5-star rating\n"
+        "  requires evidence of consistent record-keeping.\n"
+        "  Run before every inspection or quarterly as a health check."
+    )
+
     # Message 4: How to get the most out of it
     await update.message.reply_text(
         "HOW TO GET THE MOST OUT OF IT\n"
@@ -922,7 +1300,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         analysis = analyze_text_entry(text, restaurant["name"])
-        save_entry(
+        entry_id = save_entry(
             restaurant["id"],
             staff["id"],
             "voice",
@@ -930,17 +1308,25 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             json.dumps(analysis),
             analysis.get("category", "general"),
         )
+        _auto_log_compliance(restaurant["id"], entry_id, analysis, date.today().isoformat())
 
         urgency = analysis.get("urgency", "low")
         icon = URGENCY_ICONS.get(urgency, "⚪")
         summary = analysis.get("summary", text[:100])
+
+        compliance_note = ""
+        if analysis.get("tips_detected"):
+            compliance_note += "\n\nTips Act: tip event logged automatically."
+        if analysis.get("allergen_risk"):
+            compliance_note += "\n\nAllergen alert: possible allergen impact flagged. Use /allergens to review."
 
         await update.message.reply_text(
             f"Captured ({update.effective_user.first_name}):\n"
             f'"{text[:200]}"\n\n'
             f"Category: {analysis.get('category', 'general')}\n"
             f"Summary: {summary}\n"
-            f"Urgency: {icon} {urgency}\n\n"
+            f"Urgency: {icon} {urgency}"
+            f"{compliance_note}\n\n"
             f"Wrong detail? /correct the beef was £450 not £540\nWrong entry? /deletelast and re-send."
         )
     finally:
@@ -995,17 +1381,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 analysis.get("summary", ""),
             )
 
+        _auto_log_compliance(restaurant["id"], entry_id, analysis, date.today().isoformat())
+
         supplier = analysis.get("supplier_name") or "Unknown"
         total = analysis.get("total_amount")
         total_str = f"£{total:.2f}" if total else "Not found"
         raw_due = analysis.get("due_date")
         due_str = f"\nPayment due: {_fmt_date(raw_due) if raw_due else 'defaulting to 30 days'}" if total else ""
 
+        allergen_note = ""
+        if analysis.get("allergen_risk"):
+            allergen_note = f"\n\nAllergen alert: {analysis.get('allergen_detail', 'Possible allergen impact — check your declarations.')}\nUse /allergens to review all flagged items."
+
         await update.message.reply_text(
             f"Invoice / Receipt Captured:\n"
             f"Supplier: {supplier}\n"
             f"Total: {total_str}{due_str}\n"
-            f"Summary: {analysis.get('summary', 'Document logged')}\n\n"
+            f"Summary: {analysis.get('summary', 'Document logged')}"
+            f"{allergen_note}\n\n"
             f"Added to invoices — track with /outstanding\n"
             f"Wrong amount or supplier? /correct the total was £340 not £430\n"
             f"Wrong photo entirely? /deletelast and re-send a clearer one."
@@ -1026,7 +1419,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     staff = _ensure_staff(restaurant["id"], update.effective_user)
 
     analysis = analyze_text_entry(text, restaurant["name"])
-    save_entry(
+    entry_id = save_entry(
         restaurant["id"],
         staff["id"],
         "text",
@@ -1034,16 +1427,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         json.dumps(analysis),
         analysis.get("category", "general"),
     )
+    _auto_log_compliance(restaurant["id"], entry_id, analysis, date.today().isoformat())
 
     urgency = analysis.get("urgency", "low")
     icon = URGENCY_ICONS.get(urgency, "⚪")
     summary = analysis.get("summary", text[:80])
+
+    compliance_note = ""
+    if analysis.get("tips_detected"):
+        compliance_note += "\n\nTips Act: tip event logged automatically."
+    if analysis.get("allergen_risk"):
+        compliance_note += "\n\nAllergen alert: possible allergen impact flagged. Use /allergens to review."
+
     await update.message.reply_text(
         f"Captured ({update.effective_user.first_name}):\n"
         f'"{text[:200]}"\n\n'
         f"Category: {analysis.get('category', 'general')}\n"
         f"Summary: {summary}\n"
-        f"Urgency: {icon} {urgency}\n\n"
+        f"Urgency: {icon} {urgency}"
+        f"{compliance_note}\n\n"
         f"Wrong detail? /correct the beef was £450 not £540\nWrong entry? /deletelast and re-send."
     )
 
@@ -1268,6 +1670,13 @@ def main():
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
     app.add_handler(CommandHandler("features", cmd_features))
+
+    # UK compliance commands
+    app.add_handler(CommandHandler("tips", cmd_tips))
+    app.add_handler(CommandHandler("tipsreport", cmd_tipsreport))
+    app.add_handler(CommandHandler("inspection", cmd_inspection))
+    app.add_handler(CommandHandler("allergens", cmd_allergens))
+    app.add_handler(CommandHandler("resolvallergen", cmd_resolvallergen))
 
     # Messages — voice before text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
