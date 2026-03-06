@@ -2529,49 +2529,80 @@ async def _invoice_reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
 # ── Version / deployment info ─────────────────────────────────────────────────
 
-def _git_version_info() -> dict:
-    """Return git commit info. Fails gracefully if git is unavailable."""
+def _get_version_info() -> dict:
+    """
+    Read deployment info from Railway environment variables (always available),
+    falling back to git for local development.
+    Railway sets these automatically on every deploy:
+      RAILWAY_GIT_COMMIT_SHA, RAILWAY_GIT_BRANCH, RAILWAY_DEPLOYMENT_ID
+    """
+    commit_hash = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7]
+    branch      = os.environ.get("RAILWAY_GIT_BRANCH", "")
+    deploy_id   = os.environ.get("RAILWAY_DEPLOYMENT_ID", "")
+
+    if commit_hash:
+        # Running on Railway — get commit message via git if possible, else skip
+        msg = ""
+        try:
+            msg = subprocess.check_output(
+                ["git", "log", "-1", "--format=%s", commit_hash],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+        except Exception:
+            msg = "See GitHub for full changelog"
+
+        deploy_date = "check Railway dashboard"
+        try:
+            raw = subprocess.check_output(
+                ["git", "log", "-1", "--format=%ci", commit_hash],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+            dt = datetime.fromisoformat(raw)
+            deploy_date = dt.strftime("%d %b %Y at %H:%M UTC")
+        except Exception:
+            pass
+
+        return {
+            "source":  "railway",
+            "hash":    commit_hash or "unknown",
+            "branch":  branch or "main",
+            "date":    deploy_date,
+            "msg":     msg or "—",
+            "deploy_id": deploy_id or "—",
+        }
+
+    # Local / non-Railway fallback — use git directly
     def _run(args):
         return subprocess.check_output(args, stderr=subprocess.DEVNULL).decode().strip()
     try:
-        commit_hash  = _run(["git", "rev-parse", "--short", "HEAD"])
-        commit_date  = _run(["git", "log", "-1", "--format=%ci"])          # e.g. 2026-03-06 22:40:00 +0000
-        commit_msg   = _run(["git", "log", "-1", "--format=%s"])           # subject of latest commit
-        recent_log   = _run(["git", "log", "--oneline", "-5"])             # last 5 commits
-        return {"hash": commit_hash, "date": commit_date, "msg": commit_msg, "log": recent_log}
+        commit_hash = _run(["git", "rev-parse", "--short", "HEAD"])
+        raw_date    = _run(["git", "log", "-1", "--format=%ci"])
+        dt          = datetime.fromisoformat(raw_date)
+        deploy_date = dt.strftime("%d %b %Y at %H:%M UTC")
+        msg         = _run(["git", "log", "-1", "--format=%s"])
+        branch      = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        return {"source": "local", "hash": commit_hash, "branch": branch,
+                "date": deploy_date, "msg": msg, "deploy_id": "—"}
     except Exception:
-        return {"hash": "unknown", "date": "unknown", "msg": "unknown", "log": "Not available"}
+        return {"source": "unknown", "hash": "unknown", "branch": "unknown",
+                "date": "unknown", "msg": "unknown", "deploy_id": "—"}
 
 
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /version — show when this bot was last deployed and what changed.
-    """
-    info = _git_version_info()
+    """/version — show when this bot was last deployed and what changed."""
+    info = _get_version_info()
 
-    # Format the deploy date nicely if possible
-    deploy_date = info["date"]
-    try:
-        dt = datetime.fromisoformat(info["date"])
-        deploy_date = dt.strftime("%d %b %Y at %H:%M UTC")
-    except Exception:
-        pass
-
-    # Build the recent-changes block
-    lines = []
-    for line in info["log"].splitlines():
-        # strip the commit hash prefix (7 chars + space) for readability
-        parts = line.split(" ", 1)
-        msg = parts[1] if len(parts) == 2 else line
-        lines.append(f"  • {msg}")
-    recent = "\n".join(lines) if lines else "  • No history available"
+    source_label = "Railway" if info["source"] == "railway" else "Local dev"
 
     text = (
         f"*Restaurant-IQ — Deployment Info*\n\n"
-        f"*Last deployed:* {deploy_date}\n"
+        f"*Environment:* {source_label}\n"
+        f"*Branch:* `{info['branch']}`\n"
         f"*Commit:* `{info['hash']}`\n"
-        f"*Latest change:* {info['msg']}\n\n"
-        f"*Recent updates:*\n{recent}"
+        f"*Deployed:* {info['date']}\n"
+        f"*Latest change:* {info['msg']}\n"
+        f"*Deploy ID:* `{info['deploy_id']}`"
+    )
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
