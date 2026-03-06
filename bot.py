@@ -78,6 +78,18 @@ from database import (
     resolve_support_ticket,
     get_all_open_tickets,
     update_restaurant_name,
+    # New features
+    save_labour_entry,
+    get_labour_for_period,
+    get_labour_summary,
+    save_invoice_line_items,
+    detect_price_changes,
+    get_all_restaurants,
+    get_weekly_reports,
+    get_report_by_week,
+    get_staff_entry_counts,
+    get_eightysix_trends,
+    delete_entries_older_than,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -100,6 +112,9 @@ VOICE_DIR = "voice_files"
 PHOTO_DIR = "photo_files"
 
 URGENCY_ICONS = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+
+# Regex to extract monetary amounts like £450, £1,200, 1200, 1200.50
+_re_amount = re.compile(r"£?([\d,]+(?:\.\d{1,2})?)")
 
 for _d in [REPORTS_DIR, VOICE_DIR, PHOTO_DIR]:
     os.makedirs(_d, exist_ok=True)
@@ -291,14 +306,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  Text        — Any quick update\n\n"
         "REPORTS & QUERIES:\n"
         "  /weeklyreport          — Full weekly briefing + P&L (PDF included)\n"
-        "  /financials            — Revenue vs costs for any period\n"
+        "  /history               — Browse past weekly reports\n"
+        "  /today                 — Everything logged today\n"
+        "  /financials            — Revenue, costs, labour and net margin\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
         "  /status                — Entries captured this week\n\n"
-        "INVOICES:\n"
+        "COSTS & LABOUR:\n"
+        "  /labour £450 wages Mon — Record wages or labour costs\n"
         "  /outstanding           — List unpaid invoices\n"
         "  /markpaid 12           — Mark invoice #12 as paid\n\n"
+        "TEAM & MENU:\n"
+        "  /teamstats             — Who's contributing and how much\n"
+        "  /eightysix             — Most frequently 86'd menu items\n\n"
         "UK LEGAL COMPLIANCE:\n"
         "  /tips                  — Tips log (Tips Act 2023)\n"
         "  /tipsreport            — Formal tip allocation record\n"
@@ -307,13 +328,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "DATA MANAGEMENT:\n"
         "  /rename NewName        — Rename your restaurant\n"
         "  /import [dates]: [description] — Import any historical period\n"
+        "  /export                — Export entries as CSV (for Excel/accountants)\n"
+        "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
         "  /ask [question]        — AI-powered help (anything about the bot)\n"
         "  /support [message]     — Contact the support team\n"
         "  /supportstatus         — Check your support tickets\n\n"
         "Every message from any team member in this group is captured and analysed.\n"
-        "Tips and allergen risks are detected and logged automatically.\n\n"
+        "Tips and allergen risks are detected and logged automatically.\n"
+        "Weekly reports are sent automatically every Monday at 08:00.\n\n"
         "Type /features for a full guide, or /ask [your question] for instant help."
     )
 
@@ -726,14 +750,23 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for item in fin["cost_items"]
         )
 
+    labour_lines = ""
+    if fin.get("labour_items"):
+        labour_lines = "\nLabour recorded:\n" + "\n".join(
+            f"  {item['date']}  {(item['description'] or 'Labour'):.<30} £{item['amount']:>8,.2f}"
+            for item in fin["labour_items"]
+        )
+
+    food_margin = fin.get("food_margin_pct", 0)
+    net_margin = fin.get("net_margin_pct", 0)
     margin_note = ""
-    if fin["gross_margin_pct"] > 0:
-        if fin["gross_margin_pct"] > 70:
-            margin_note = "  ✅ Margin looks healthy — note costs may be incomplete."
-        elif fin["gross_margin_pct"] > 50:
-            margin_note = "  🟡 Moderate margin — review cost capture completeness."
+    if food_margin > 0:
+        if food_margin > 70:
+            margin_note = "  ✅ Food GP looks healthy — review labour % too."
+        elif food_margin > 55:
+            margin_note = "  🟡 Food GP moderate — check invoice capture completeness."
         else:
-            margin_note = "  🔴 Margin looks tight — check all invoices have been photographed."
+            margin_note = "  🔴 Food GP looks tight — review all costs and pricing."
 
     outstanding = get_outstanding_invoices(restaurant["id"])
     outstanding_total = sum(inv["total_amount"] or 0 for inv in outstanding)
@@ -742,20 +775,29 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if outstanding else "\nAll captured invoices: paid ✅"
     )
 
+    labour_note = (
+        f"\nLabour costs:            £{fin['labour_total']:>10,.2f}"
+        if fin.get("labour_total", 0) > 0
+        else "\nLabour costs:               not recorded — use /labour to add"
+    )
+
     await update.message.reply_text(
         f"Financial Summary — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 40}\n\n"
         f"Revenue captured:        £{fin['revenue_total']:>10,.2f}\n"
         f"Invoiced costs captured: £{fin['cost_total']:>10,.2f}\n"
+        f"{labour_note}\n"
         f"{'─' * 40}\n"
-        f"Gross profit:            £{fin['gross_profit']:>10,.2f}\n"
-        f"Gross margin:            {fin['gross_margin_pct']:>9.1f}%\n"
+        f"Net profit:              £{fin['gross_profit']:>10,.2f}\n"
+        f"Food GP margin:          {food_margin:>9.1f}%\n"
+        f"Net margin (inc labour): {net_margin:>9.1f}%\n"
         f"{margin_note}"
         f"{outstanding_line}"
-        f"{cost_lines}\n\n"
-        f"Note: revenue = reported takings from voice/text updates.\n"
-        f"Costs = invoices photographed. Labour costs not captured here."
+        f"{cost_lines}"
+        f"{labour_lines}\n\n"
+        f"Note: revenue = reported takings. Costs = photographed invoices.\n"
+        f"Labour = entries via /labour. Use /labour £X [description] to record wages."
     )
 
 
@@ -1777,6 +1819,391 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── Labour cost command ───────────────────────────────────────────────────────
+
+async def cmd_labour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /labour £450 front of house wages Monday
+    /labour £1200 kitchen wages week ending 2 March
+
+    Record labour costs manually. These are included in /financials and the
+    weekly report so you get a real net margin figure, not just food GP.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Record wages, agency fees, or any labour cost.\n\n"
+            "Usage: /labour £[amount] [description]\n\n"
+            "Examples:\n"
+            "  /labour £450 front of house wages Monday\n"
+            "  /labour £1,200 kitchen wages week ending 2 March\n"
+            "  /labour £95 agency cover Saturday lunch\n\n"
+            "Labour costs appear in /financials and the weekly report.\n"
+            "This gives you real net margin — not just food GP."
+        )
+        return
+
+    full_text = " ".join(context.args).strip()
+
+    # Parse the amount — accept £1200, £1,200, 1200
+    import re as _re
+    amount_match = _re_amount.search(full_text)
+    if not amount_match:
+        await update.message.reply_text(
+            "Could not find an amount in your message.\n\n"
+            "Usage: /labour £450 front of house wages\n"
+            "Include the £ sign or just the number."
+        )
+        return
+
+    amount_str = amount_match.group(1).replace(",", "")
+    try:
+        amount = float(amount_str)
+    except ValueError:
+        await update.message.reply_text("Could not parse the amount. Try: /labour £450 wages Monday")
+        return
+
+    description = full_text[amount_match.end():].strip() or "Labour cost"
+    today_str = date.today().isoformat()
+
+    save_labour_entry(
+        restaurant["id"],
+        labour_date=today_str,
+        amount=amount,
+        description=description,
+    )
+
+    await update.message.reply_text(
+        f"Labour cost recorded:\n\n"
+        f"Amount: £{amount:,.2f}\n"
+        f"Description: {description}\n"
+        f"Date: {date.today().strftime('%-d %B %Y')}\n\n"
+        f"This will appear in /financials and the weekly report.\n"
+        f"Use /financials to see your updated net margin."
+    )
+
+
+# ── History command ────────────────────────────────────────────────────────────
+
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /history         — list the last 4 weekly reports
+    /history 2026-03-03 — send the report for that specific week
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if context.args:
+        # Try to find a specific report by week start date
+        query = " ".join(context.args)
+        date_range = _parse_date_range(query)
+        if date_range:
+            # Snap to Monday of that week
+            target = datetime.strptime(date_range[0], "%Y-%m-%d").date()
+            week_start = str(target - timedelta(days=target.weekday()))
+        else:
+            week_start = context.args[0]
+
+        report = get_report_by_week(restaurant["id"], week_start)
+        if not report:
+            await update.message.reply_text(
+                f"No report found for week starting {_fmt_date(week_start)}.\n\n"
+                "Use /history to see all saved reports."
+            )
+            return
+
+        header = (
+            f"WEEKLY REPORT — {restaurant['name']}\n"
+            f"Week: {_fmt_date(report['week_start'])} to {_fmt_date(report['week_end'])}\n"
+            f"{'=' * 34}\n\n"
+        )
+        full_message = header + (report["report_text"] or "No report text saved.")
+        if len(full_message) <= 4096:
+            await update.message.reply_text(full_message)
+        else:
+            await update.message.reply_text(full_message[:4000] + "\n\n[truncated — run /weeklyreport for the current week's full PDF]")
+        return
+
+    # No args — list recent reports
+    reports = get_weekly_reports(restaurant["id"], limit=4)
+    if not reports:
+        await update.message.reply_text(
+            "No weekly reports saved yet.\n\n"
+            "Run /weeklyreport to generate your first one."
+        )
+        return
+
+    lines = []
+    for r in reports:
+        lines.append(
+            f"  {_fmt_date(r['week_start'])} to {_fmt_date(r['week_end'])}\n"
+            f"  → /history {r['week_start']}"
+        )
+
+    await update.message.reply_text(
+        f"Saved Reports — {restaurant['name']}\n"
+        f"{'─' * 36}\n\n"
+        + "\n\n".join(lines)
+        + "\n\nSend /history [date] to retrieve a specific report.\n"
+        "Example: /history last week"
+    )
+
+
+# ── Team stats command ─────────────────────────────────────────────────────────
+
+async def cmd_teamstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /teamstats         — this week
+    /teamstats last month — previous month
+    Show who's contributing and how much.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    query = " ".join(context.args).strip() if context.args else "this week"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this week, this month, last month"
+        )
+        return
+
+    start_date, end_date = date_range
+    period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+
+    stats = get_staff_entry_counts(restaurant["id"], start_date, end_date)
+
+    if not stats:
+        await update.message.reply_text("No staff data found.")
+        return
+
+    lines = []
+    for s in stats:
+        count = s["entry_count"] or 0
+        last = _fmt_date(s["last_entry_date"]) if s["last_entry_date"] else "never"
+        bar = "█" * min(count, 20) if count > 0 else "·"
+        role_tag = f" [{s['role']}]" if s["role"] and s["role"] != "staff" else ""
+        lines.append(
+            f"{s['name']}{role_tag}\n"
+            f"  {bar} {count} entries  |  last: {last}"
+        )
+
+    total_entries = sum(s["entry_count"] or 0 for s in stats)
+    active = sum(1 for s in stats if (s["entry_count"] or 0) > 0)
+
+    await update.message.reply_text(
+        f"Team Engagement — {restaurant['name']}\n"
+        f"Period: {period_label}\n"
+        f"{'─' * 38}\n\n"
+        + "\n\n".join(lines)
+        + f"\n\n{'─' * 38}\n"
+        f"Total entries: {total_entries}  |  Active contributors: {active}/{len(stats)}\n\n"
+        "The more your team reports, the sharper the weekly briefing.\n"
+        "Best habit: end-of-shift voice note from whoever closes."
+    )
+
+
+# ── 86'd item trend command ────────────────────────────────────────────────────
+
+async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /eightysix         — this month
+    /eightysix last month — previous month
+    Shows which menu items run out most frequently — use for ordering and menu decisions.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    query = " ".join(context.args).strip() if context.args else "this month"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this month, last month, this week"
+        )
+        return
+
+    start_date, end_date = date_range
+    period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+
+    trends = get_eightysix_trends(restaurant["id"], start_date, end_date)
+
+    if not trends:
+        await update.message.reply_text(
+            f"No 86'd items recorded for {period_label}.\n\n"
+            "Items are logged automatically when your team mentions running out of something.\n"
+            "Example voice note: \"We 86'd the salmon at 7pm, ran out of the lamb too.\""
+        )
+        return
+
+    lines = []
+    for item, count in trends[:15]:
+        bar = "█" * min(count, 10)
+        lines.append(f"  {bar} {count}×  {item.title()}")
+
+    await update.message.reply_text(
+        f"86'd Items — {restaurant['name']}\n"
+        f"Period: {period_label}\n"
+        f"{'─' * 36}\n\n"
+        + "\n".join(lines)
+        + f"\n\nTotal unique items: {len(trends)}\n\n"
+        "Use this for:\n"
+        "  - Ordering: increase PAR for frequently 86'd items\n"
+        "  - Menu: consider removing or reducing portion sizes on items that always run out\n"
+        "  - Pricing: popular items that 86 early may support a price increase"
+    )
+
+
+# ── Export CSV command ─────────────────────────────────────────────────────────
+
+async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /export           — export this week's entries as CSV
+    /export last month — export a specific period
+    Useful for importing into Excel, accounting software, or sharing with accountants.
+    """
+    import csv
+    import io
+
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    query = " ".join(context.args).strip() if context.args else "this week"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this week, this month, last month, March 2026"
+        )
+        return
+
+    start_date, end_date = date_range
+    entries = get_entries_with_staff(restaurant["id"], start_date, end_date)
+
+    if not entries:
+        await update.message.reply_text(
+            f"No entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}."
+        )
+        return
+
+    # Build CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue", "Covers"])
+
+    for e in entries:
+        summary = ""
+        urgency = ""
+        revenue = ""
+        covers = ""
+        if e["structured_data"]:
+            try:
+                a = json.loads(e["structured_data"])
+                summary = a.get("summary", "")
+                urgency = a.get("urgency", "")
+                revenue = a.get("revenue") or ""
+                covers = a.get("covers") or ""
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        writer.writerow([
+            e["entry_date"],
+            e["entry_time"],
+            e["entry_type"],
+            e["staff_name"] or "",
+            e["category"] or "",
+            summary,
+            (e["raw_text"] or "")[:300],
+            urgency,
+            revenue,
+            covers,
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")  # utf-8-sig for Excel compatibility
+    period_label = f"{start_date}_to_{end_date}"
+    safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
+    filename = f"{safe_name}_{period_label}.csv"
+
+    await update.message.reply_document(
+        document=csv_bytes,
+        filename=filename,
+        caption=(
+            f"Data export: {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(entries)} entries"
+        ),
+    )
+
+
+# ── GDPR data deletion command ─────────────────────────────────────────────────
+
+async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /deletedata 90     — delete all entries older than 90 days
+    /deletedata 365    — delete entries older than 1 year
+    GDPR compliance: personal data should not be kept longer than necessary.
+    3-year retention applies to Tips Act records (those are NOT deleted by this command).
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Delete entries older than a specified number of days.\n\n"
+            "Usage: /deletedata [days]\n\n"
+            "Examples:\n"
+            "  /deletedata 90   — delete entries older than 90 days\n"
+            "  /deletedata 365  — delete entries older than 1 year\n\n"
+            "GDPR note: this deletes daily_entries and linked compliance records.\n"
+            "Tips Act records (3-year legal retention) are NOT affected.\n"
+            "Use /cleardata CONFIRM to delete everything."
+        )
+        return
+
+    if not context.args[0].isdigit():
+        await update.message.reply_text(
+            "Please specify the number of days.\n"
+            "Example: /deletedata 90"
+        )
+        return
+
+    days = int(context.args[0])
+    if days < 30:
+        await update.message.reply_text(
+            "Minimum retention period is 30 days.\n"
+            "Example: /deletedata 90"
+        )
+        return
+
+    deleted = delete_entries_older_than(restaurant["id"], days)
+
+    if deleted == 0:
+        await update.message.reply_text(
+            f"No entries older than {days} days found. Nothing deleted."
+        )
+        return
+
+    await update.message.reply_text(
+        f"GDPR data deletion complete.\n\n"
+        f"Deleted: {deleted} entries older than {days} days\n"
+        f"Restaurant: {restaurant['name']}\n\n"
+        f"Remaining entries and compliance records are intact.\n"
+        f"Tips Act records are unaffected (3-year legal retention applies)."
+    )
+
+
 # ── Message handlers ──────────────────────────────────────────────────────────
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1868,11 +2295,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Auto-track invoice for payment reminders and P&L
+        invoice_id = None
+        price_alerts = []
         if analysis.get("total_amount") and analysis.get("total_amount", 0) > 0:
             due_date = analysis.get("due_date") or _default_due_date(
                 analysis.get("date"), analysis.get("payment_terms")
             )
-            save_invoice(
+            invoice_id = save_invoice(
                 restaurant["id"],
                 entry_id,
                 analysis.get("supplier_name", "Unknown"),
@@ -1882,6 +2311,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 analysis.get("vat", 0),
                 analysis.get("summary", ""),
             )
+
+            # Save line items for price trend tracking
+            line_items = analysis.get("items") or []
+            supplier = analysis.get("supplier_name", "Unknown")
+            recorded_date = analysis.get("date") or str(date.today())
+            if line_items and invoice_id:
+                price_alerts = detect_price_changes(
+                    restaurant["id"], supplier, line_items, recorded_date
+                )
+                save_invoice_line_items(
+                    restaurant["id"], invoice_id, supplier, line_items, recorded_date
+                )
 
         _auto_log_compliance(restaurant["id"], entry_id, analysis, date.today().isoformat())
 
@@ -1895,12 +2336,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if analysis.get("allergen_risk"):
             allergen_note = f"\n\nAllergen alert: {analysis.get('allergen_detail', 'Possible allergen impact — check your declarations.')}\nUse /allergens to review all flagged items."
 
+        price_alert_note = ""
+        if price_alerts:
+            lines = []
+            for pa in price_alerts:
+                direction = "▲" if pa["pct_change"] > 0 else "▼"
+                lines.append(
+                    f"  {direction} {pa['item']}: £{pa['old_avg']} → £{pa['new_price']} "
+                    f"({pa['pct_change']:+.1f}%)"
+                )
+            price_alert_note = "\n\n⚠️ Price changes vs. your history:\n" + "\n".join(lines)
+
         await update.message.reply_text(
             f"Invoice / Receipt Captured:\n"
             f"Supplier: {supplier}\n"
             f"Total: {total_str}{due_str}\n"
             f"Summary: {analysis.get('summary', 'Document logged')}"
-            f"{allergen_note}\n\n"
+            f"{allergen_note}"
+            f"{price_alert_note}\n\n"
             f"Added to invoices — track with /outstanding\n"
             f"Wrong amount or supplier? /correct the total was £340 not £430\n"
             f"Wrong photo entirely? /deletelast and re-send a clearer one."
@@ -1953,6 +2406,76 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
+
+async def _auto_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Runs every Monday at 08:00.
+    Auto-generates and sends the weekly report to every registered restaurant group.
+    Owners no longer need to remember /weeklyreport — it arrives automatically.
+    """
+    today = datetime.now()
+    week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+    week_end = today.strftime("%Y-%m-%d")
+
+    restaurants = get_all_restaurants()
+    logger.info("Auto weekly report job: %d restaurants", len(restaurants))
+
+    for restaurant in restaurants:
+        chat_id = restaurant["telegram_group_id"]
+        if not chat_id:
+            continue
+
+        try:
+            from database import get_entries_for_period
+            entries = get_entries_for_period(restaurant["id"], week_start, week_end)
+            if not entries:
+                logger.info("Auto report: no entries for %s — skipping", restaurant["name"])
+                continue
+
+            financials = get_financial_summary(restaurant["id"], week_start, week_end)
+
+            entries_data = []
+            for e in entries:
+                entry = {
+                    "date": e["entry_date"],
+                    "time": e["entry_time"],
+                    "type": e["entry_type"],
+                    "raw_text": e["raw_text"] or "",
+                }
+                if e["structured_data"]:
+                    try:
+                        entry["analysis"] = json.loads(e["structured_data"])
+                    except json.JSONDecodeError:
+                        pass
+                entries_data.append(entry)
+
+            report_text = generate_weekly_report(entries_data, restaurant["name"], financials)
+            save_weekly_report(restaurant["id"], week_start, week_end, report_text)
+
+            safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
+            pdf_path = os.path.join(REPORTS_DIR, f"{safe_name}_{week_start}.pdf")
+            generate_pdf_report(report_text, restaurant["name"], week_start, week_end, pdf_path)
+
+            header = f"RESTAURANT-IQ WEEKLY BRIEFING\n{'=' * 34}\n\n"
+            full_message = header + report_text
+            if len(full_message) <= 4096:
+                await context.bot.send_message(chat_id=chat_id, text=full_message)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=full_message[:4000] + "\n\n[continued in PDF...]")
+
+            with open(pdf_path, "rb") as pdf_file:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=pdf_file,
+                    filename=os.path.basename(pdf_path),
+                    caption=f"Weekly briefing for {restaurant['name']} — {_fmt_date(week_start)}",
+                )
+
+            logger.info("Auto report sent to %s (%s)", restaurant["name"], chat_id)
+
+        except Exception as e:
+            logger.error("Auto report failed for %s: %s", restaurant.get("name", "?"), e)
+
 
 async def _invoice_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -2208,6 +2731,14 @@ def main():
     app.add_handler(CommandHandler("allergens", cmd_allergens))
     app.add_handler(CommandHandler("resolvallergen", cmd_resolvallergen))
 
+    # New features
+    app.add_handler(CommandHandler("labour", cmd_labour))
+    app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("teamstats", cmd_teamstats))
+    app.add_handler(CommandHandler("eightysix", cmd_eightysix))
+    app.add_handler(CommandHandler("export", cmd_export))
+    app.add_handler(CommandHandler("deletedata", cmd_deletedata))
+
     # Messages — voice before text
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -2218,6 +2749,14 @@ def main():
         _invoice_reminder_job,
         time=datetime.strptime("09:00", "%H:%M").time(),
         name="invoice_reminders",
+    )
+
+    # Auto weekly report every Monday at 08:00 (owners don't need to run /weeklyreport)
+    app.job_queue.run_daily(
+        _auto_weekly_report_job,
+        time=datetime.strptime("08:00", "%H:%M").time(),
+        days=(0,),  # 0 = Monday
+        name="weekly_reports",
     )
 
     logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")

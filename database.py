@@ -133,6 +133,44 @@ def init_db():
             )
         """)
 
+        # Labour cost entries — wages, agency staff, contractor payments.
+        # Captured via /labour command or auto-detected from voice/text.
+        # Critical for true P&L: labour is typically 28-35% of revenue.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS labour_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                entry_id INTEGER,
+                labour_date TEXT NOT NULL,
+                shift TEXT,
+                amount REAL NOT NULL,
+                hours REAL,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (entry_id) REFERENCES daily_entries(id)
+            )
+        """)
+
+        # Supplier price points — one row per line item per invoice.
+        # Enables price trend detection: flags increases vs. historical average.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_line_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                invoice_id INTEGER,
+                supplier_name TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                unit_price REAL,
+                quantity REAL,
+                unit TEXT,
+                recorded_date TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id),
+                FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+            )
+        """)
+
         # Support tickets — allows restaurants to report issues to the app owner
         # and receive replies without phone calls.
         c.execute("""
@@ -611,15 +649,264 @@ def get_financial_summary(restaurant_id: int, start_date: str, end_date: str) ->
             except (TypeError, ValueError):
                 pass
 
-    gross_profit = revenue_total - cost_total
-    gross_margin = round(gross_profit / revenue_total * 100, 1) if revenue_total else 0.0
+    # Include labour costs in the P&L
+    labour = get_labour_for_period(restaurant_id, start_date, end_date)
+    labour_total = sum(l["amount"] for l in labour)
+
+    gross_profit = revenue_total - cost_total - labour_total
+    net_margin = round(gross_profit / revenue_total * 100, 1) if revenue_total else 0.0
+    # GP before labour (food cost margin, classic restaurant metric)
+    food_gp = revenue_total - cost_total
+    food_margin = round(food_gp / revenue_total * 100, 1) if revenue_total else 0.0
 
     return {
         "period_start": start_date,
         "period_end": end_date,
         "revenue_total": round(revenue_total, 2),
         "cost_total": round(cost_total, 2),
+        "labour_total": round(labour_total, 2),
         "gross_profit": round(gross_profit, 2),
-        "gross_margin_pct": gross_margin,
+        "food_margin_pct": food_margin,
+        "net_margin_pct": net_margin,
         "cost_items": cost_items,
+        "labour_items": [{"date": l["labour_date"], "description": l["description"] or "Labour", "amount": l["amount"]} for l in labour],
     }
+
+
+# ── Labour cost tracking ──────────────────────────────────────────────────────
+
+def save_labour_entry(restaurant_id: int, labour_date: str, amount: float,
+                      description: str, shift: str = None, hours: float = None,
+                      entry_id: int = None) -> int:
+    """Record a labour cost (wages, agency, contractor). Called by /labour command."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO labour_entries
+               (restaurant_id, entry_id, labour_date, shift, amount, hours, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, entry_id, labour_date, shift, amount, hours, description),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_labour_for_period(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """Return all labour entries in a date range, newest first."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM labour_entries
+               WHERE restaurant_id = ? AND labour_date BETWEEN ? AND ?
+               ORDER BY labour_date DESC""",
+            (restaurant_id, start_date, end_date),
+        )
+        return c.fetchall()
+
+
+def get_labour_summary(restaurant_id: int, start_date: str, end_date: str) -> dict:
+    """Total labour spend and breakdown for a period."""
+    entries = get_labour_for_period(restaurant_id, start_date, end_date)
+    total = sum(e["amount"] for e in entries)
+    return {
+        "total": round(total, 2),
+        "entries": len(entries),
+        "items": [dict(e) for e in entries],
+    }
+
+
+# ── Supplier price trend tracking ─────────────────────────────────────────────
+
+def save_invoice_line_items(restaurant_id: int, invoice_id: int,
+                             supplier_name: str, items: list, recorded_date: str):
+    """
+    Save line items from an invoice for price trend tracking.
+    items: list of dicts with keys: name, unit_price, quantity, unit
+    """
+    with _db() as conn:
+        c = conn.cursor()
+        for item in items:
+            item_name = (item.get("name") or "").strip()
+            if not item_name:
+                continue
+            c.execute(
+                """INSERT INTO invoice_line_items
+                   (restaurant_id, invoice_id, supplier_name, item_name,
+                    unit_price, quantity, unit, recorded_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    restaurant_id, invoice_id, supplier_name, item_name,
+                    item.get("unit_price"), item.get("quantity"),
+                    item.get("unit"), recorded_date,
+                ),
+            )
+        conn.commit()
+
+
+def get_price_history(restaurant_id: int, supplier_name: str,
+                      item_name: str, limit: int = 5) -> list:
+    """Return the last N unit prices for a given supplier+item combination."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT unit_price, recorded_date FROM invoice_line_items
+               WHERE restaurant_id = ? AND supplier_name = ? AND item_name = ?
+                 AND unit_price IS NOT NULL
+               ORDER BY recorded_date DESC LIMIT ?""",
+            (restaurant_id, supplier_name, item_name, limit),
+        )
+        return c.fetchall()
+
+
+def detect_price_changes(restaurant_id: int, supplier_name: str,
+                         items: list, recorded_date: str) -> list:
+    """
+    Compare new invoice line items against historical prices.
+    Returns a list of dicts describing price changes above a 5% threshold.
+    """
+    alerts = []
+    for item in items:
+        item_name = (item.get("name") or "").strip()
+        new_price = item.get("unit_price")
+        if not item_name or not new_price:
+            continue
+        history = get_price_history(restaurant_id, supplier_name, item_name, limit=5)
+        if not history:
+            continue  # First time seeing this item — no baseline
+        avg_price = sum(row["unit_price"] for row in history) / len(history)
+        if avg_price <= 0:
+            continue
+        pct_change = (new_price - avg_price) / avg_price * 100
+        if pct_change >= 5:
+            alerts.append({
+                "item": item_name,
+                "supplier": supplier_name,
+                "old_avg": round(avg_price, 2),
+                "new_price": round(new_price, 2),
+                "pct_change": round(pct_change, 1),
+            })
+        elif pct_change <= -5:
+            alerts.append({
+                "item": item_name,
+                "supplier": supplier_name,
+                "old_avg": round(avg_price, 2),
+                "new_price": round(new_price, 2),
+                "pct_change": round(pct_change, 1),
+            })
+    return alerts
+
+
+# ── Multi-restaurant support ──────────────────────────────────────────────────
+
+def get_all_restaurants() -> list:
+    """Return all registered restaurants. Used by the scheduled report job."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM restaurants ORDER BY id")
+        return c.fetchall()
+
+
+# ── Weekly report history ─────────────────────────────────────────────────────
+
+def get_weekly_reports(restaurant_id: int, limit: int = 4) -> list:
+    """Return the most recent weekly reports for a restaurant."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM weekly_reports
+               WHERE restaurant_id = ?
+               ORDER BY week_start DESC LIMIT ?""",
+            (restaurant_id, limit),
+        )
+        return c.fetchall()
+
+
+def get_report_by_week(restaurant_id: int, week_start: str):
+    """Return the saved report for a specific week start date (YYYY-MM-DD)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT * FROM weekly_reports WHERE restaurant_id = ? AND week_start = ?",
+            (restaurant_id, week_start),
+        )
+        return c.fetchone()
+
+
+# ── Staff engagement / team stats ─────────────────────────────────────────────
+
+def get_staff_entry_counts(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """
+    Return entry counts per staff member for a period.
+    Used by /teamstats.
+    """
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT s.name, s.role, COUNT(e.id) as entry_count,
+                      MAX(e.entry_date) as last_entry_date
+               FROM staff s
+               LEFT JOIN daily_entries e
+                 ON e.staff_id = s.id
+                 AND e.restaurant_id = s.restaurant_id
+                 AND e.entry_date BETWEEN ? AND ?
+               WHERE s.restaurant_id = ?
+               GROUP BY s.id
+               ORDER BY entry_count DESC""",
+            (start_date, end_date, restaurant_id),
+        )
+        return c.fetchall()
+
+
+# ── 86'd item trend tracking ──────────────────────────────────────────────────
+
+def get_eightysix_trends(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """
+    Aggregate all items_86d mentions across entries in a period.
+    Returns list of (item_name, count) sorted by most frequent.
+    """
+    entries = get_entries_for_period(restaurant_id, start_date, end_date)
+    counts: dict = {}
+    for e in entries:
+        if not e["structured_data"]:
+            continue
+        try:
+            data = json.loads(e["structured_data"])
+            for item in (data.get("items_86d") or []):
+                if isinstance(item, str):
+                    key = item.strip().lower()
+                    if key:
+                        counts[key] = counts.get(key, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+
+# ── GDPR data retention ───────────────────────────────────────────────────────
+
+def delete_entries_older_than(restaurant_id: int, days: int) -> int:
+    """
+    Delete daily entries (and linked compliance records) older than `days` days.
+    Returns the number of entries deleted.
+    GDPR obligation: personal data should not be kept longer than necessary.
+    """
+    with _db() as conn:
+        c = conn.cursor()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        # Find entry IDs to delete
+        c.execute(
+            "SELECT id FROM daily_entries WHERE restaurant_id = ? AND entry_date < ?",
+            (restaurant_id, cutoff),
+        )
+        entry_ids = [row["id"] for row in c.fetchall()]
+
+        if not entry_ids:
+            return 0
+
+        placeholders = ",".join("?" * len(entry_ids))
+        c.execute(f"DELETE FROM tips_log WHERE entry_id IN ({placeholders})", entry_ids)
+        c.execute(f"DELETE FROM allergen_alerts WHERE entry_id IN ({placeholders})", entry_ids)
+        c.execute(f"DELETE FROM labour_entries WHERE entry_id IN ({placeholders})", entry_ids)
+        c.execute(f"DELETE FROM daily_entries WHERE id IN ({placeholders})", entry_ids)
+        conn.commit()
+        return len(entry_ids)

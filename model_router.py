@@ -94,7 +94,9 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 Tips detection: set tips_detected=true if the message mentions tips, gratuities, service charge, or tronc.
   Extract tip_amount (number, £) and tip_type ("card", "cash", or "both") if mentioned.
 Allergen risk: set allergen_risk=true if a supplier change, ingredient substitution, or new product is mentioned
-  that could affect food allergen declarations. Describe the concern in allergen_detail."""
+  that could affect food allergen declarations. Describe the concern in allergen_detail.
+Labour cost: set category="labour" if the message mentions wages, payroll, staff costs, agency fees, or labour costs.
+  Extract the £ amount into the revenue field (we reuse it for labour amounts on the labour category)."""
 
 
 def _image_prompt(restaurant_name: str) -> str:
@@ -134,13 +136,17 @@ def _report_prompt(entries_summary: list, restaurant_name: str,
                    financials: dict | None = None) -> str:
     fin_block = ""
     if financials and financials.get("revenue_total", 0) > 0:
+        labour_line = ""
+        if financials.get("labour_total", 0) > 0:
+            labour_line = f"  Labour costs captured: £{financials['labour_total']:,.2f}\n"
         fin_block = f"""
 Pre-calculated financial totals for this period:
   Revenue captured: £{financials['revenue_total']:,.2f}
   Invoiced costs captured: £{financials['cost_total']:,.2f}
-  Gross profit (revenue minus invoiced costs): £{financials['gross_profit']:,.2f}
-  Gross margin: {financials['gross_margin_pct']}%
-  Note: costs figure includes only invoices photographed this week. Labour and other costs not captured here.
+{labour_line}  Net profit (revenue minus food costs and labour): £{financials['gross_profit']:,.2f}
+  Food GP margin (before labour): {financials.get('food_margin_pct', 0)}%
+  Net margin (after labour): {financials.get('net_margin_pct', 0)}%
+  Note: costs = invoices photographed this week. Labour = entries via /labour command.
 """
 
     return f"""You are Restaurant-IQ, an AI intelligence service for "{restaurant_name}", a London food business.
@@ -728,15 +734,21 @@ DAILY USE: Send voice notes, photos of invoices, or text messages to the group.
 COMMANDS:
   /status        — how many entries captured this week
   /today         — what was logged today
+  /history       — browse past weekly reports (/history [date] for specific week)
   /recall [date] — recall any day or week (e.g. /recall yesterday, /recall 5 May, /recall March)
-  /weeklyreport  — full AI briefing + PDF for the current week
-  /financials    — revenue vs costs for any period
+  /weeklyreport  — full AI briefing + PDF for the current week (also auto-sent every Monday 08:00)
+  /financials    — revenue, costs, labour and net margin for any period
+  /labour £X [description] — record wages or labour costs
   /outstanding   — unpaid invoices
   /markpaid [id] — mark an invoice as paid
+  /teamstats     — who's contributing entries and how much (staff engagement)
+  /eightysix     — which menu items run out most frequently
+  /export        — download entries as CSV for Excel or accountants
   /correct [fix] — fix a detail in your last entry (e.g. /correct the amount was £450 not £540)
   /deletelast    — delete your last entry and re-send
   /import [dates]: [description] — import any historical period (day/fortnight/month/quarter)
   /rename [name] — rename your restaurant
+  /deletedata 90 — delete entries older than 90 days (GDPR compliance)
   /cleardata     — delete all entries (keeps registration)
   /tips          — tip events log (Tips Act 2023)
   /tipsreport    — generate formal tip allocation record
