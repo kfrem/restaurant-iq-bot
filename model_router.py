@@ -610,35 +610,64 @@ Return ONLY valid JSON — no markdown, no explanation:
         }
 
 
-def analyze_history_week(description: str, start_date: str, end_date: str,
-                         restaurant_name: str) -> list:
+def analyze_history_import(description: str, start_date: str, end_date: str,
+                           restaurant_name: str) -> list:
     """
-    Parse a plain-language description of a historical week and return
+    Parse a plain-language description of any historical period and return
     a list of daily entry dicts ready to be saved to the database.
-    Used by /importweek for backfilling historical data.
+    Scales the number of entries based on the length of the period:
+      1 day       → 1-3 entries
+      2-7 days    → 3-7 entries
+      8-14 days   → 5-10 entries (fortnight)
+      15-31 days  → 7-14 entries (month)
+      32-92 days  → 10-20 entries (quarter)
+      93+ days    → 15-30 entries (multi-month)
+    Used by /import for backfilling historical data of any length.
     """
+    from datetime import date as _date
+    try:
+        d1 = _date.fromisoformat(start_date)
+        d2 = _date.fromisoformat(end_date)
+        num_days = max(1, (d2 - d1).days + 1)
+    except ValueError:
+        num_days = 7
+
+    if num_days == 1:
+        min_e, max_e = 1, 3
+    elif num_days <= 7:
+        min_e, max_e = 3, 7
+    elif num_days <= 14:
+        min_e, max_e = 5, 10
+    elif num_days <= 31:
+        min_e, max_e = 7, 14
+    elif num_days <= 92:
+        min_e, max_e = 10, 20
+    else:
+        min_e, max_e = 15, 30
+
     tier = _select_tier()
     provider = tier["provider"]
 
     prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
 
-A restaurant owner is importing historical data for the week {start_date} to {end_date}.
-They have described the week as follows:
+A restaurant owner is importing historical data covering {num_days} day(s): {start_date} to {end_date}.
+They have described this period as follows:
 
 "{description}"
 
-Extract the key facts and create 3-7 representative daily log entries covering this week.
-Spread entries across different days within {start_date} to {end_date}.
-Each entry should represent one real event (a shift report, a supplier delivery, a staff issue, etc).
+Extract the key facts and create between {min_e} and {max_e} representative daily log entries.
+Spread entries proportionally across the period — do not cluster them all on one date.
+Each entry should represent one real operational event (a shift report, a supplier delivery,
+a staff issue, a cost, a revenue figure, an equipment problem, etc).
 
-Return ONLY valid JSON — a JSON array of entry objects, no markdown:
+Return ONLY valid JSON — a JSON array of entry objects, no markdown, no explanation:
 [
   {{
     "date": "YYYY-MM-DD",
     "time": "HH:MM:SS",
     "type": "voice",
     "category": "revenue|cost|waste|staff|issue|supplier|general",
-    "raw_text": "plain English description of what happened on this day",
+    "raw_text": "plain English log entry for this event as if written by a staff member",
     "summary": "one sentence",
     "revenue": null,
     "covers": null,
@@ -646,9 +675,14 @@ Return ONLY valid JSON — a JSON array of entry objects, no markdown:
   }}
 ]
 
-Use dates between {start_date} and {end_date} only.
-Distribute entries realistically (not all on the same day).
-If revenue is mentioned, estimate a per-day split across the week."""
+Rules:
+- All dates must be between {start_date} and {end_date} inclusive
+- Spread entries across the whole period, not bunched at the start or end
+- If revenue is mentioned across multiple days/weeks, split it proportionally
+- If a specific event has a date (e.g. "fridge broke on the 14th"), use that date
+- raw_text should sound like a real staff voice note or text message, not a formal report
+- For month-long or multi-month imports, include a mix of revenue summaries, cost events,
+  staff notes, and supplier entries across different weeks"""
 
     try:
         if provider == "groq":
@@ -658,7 +692,6 @@ If revenue is mentioned, estimate a per-day split across the week."""
         else:
             raw = _TEXT_FN[provider](prompt)
 
-        # The response is a JSON array
         try:
             start = raw.index("[")
             end = raw.rindex("]") + 1
@@ -669,7 +702,7 @@ If revenue is mentioned, estimate a per-day split across the week."""
             pass
         raise ValueError("Could not parse entries array from model")
     except Exception as e:
-        logger.error("analyze_history_week error (%s): %s", provider, e)
+        logger.error("analyze_history_import error (%s): %s", provider, e)
         return []
 
 
@@ -702,7 +735,7 @@ COMMANDS:
   /markpaid [id] — mark an invoice as paid
   /correct [fix] — fix a detail in your last entry (e.g. /correct the amount was £450 not £540)
   /deletelast    — delete your last entry and re-send
-  /importweek    — import a historical week of data
+  /import [dates]: [description] — import any historical period (day/fortnight/month/quarter)
   /rename [name] — rename your restaurant
   /cleardata     — delete all entries (keeps registration)
   /tips          — tip events log (Tips Act 2023)
@@ -716,7 +749,7 @@ TIPS FOR BEST RESULTS:
   - End-of-shift voice notes are the most valuable thing your team can do
   - Photograph invoices the day they arrive for accurate due date tracking
   - The /correct command only fixes one detail — state exactly what changed
-  - Use /importweek to backfill historical weeks before you started using the bot
+  - Use /import to backfill any historical period (day, fortnight, month, quarter) before you joined
 
 Answer the question concisely and helpfully. Be specific — reference actual commands.
 If the question is about a problem, explain what likely went wrong and how to fix it.

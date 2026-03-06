@@ -21,6 +21,7 @@ UK Legal Compliance (unique to Restaurant-IQ):
   - /allergens          — allergen traceability log (Natasha's Law / FSA)
   - /resolvallergen [id]— mark an allergen alert as reviewed and resolved
   - /inspection         — FSA Food Hygiene inspection readiness report (90-day analysis)
+  - /import [dates]: [description] — import historical data for any period (day, fortnight, month, quarter, etc)
 
 Message types:
   - Voice notes  → transcribed by Whisper → analysed by AI → tips/allergens auto-logged
@@ -82,7 +83,7 @@ from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
 from model_router import (
     get_tier_status, generate_recall_summary, generate_tips_report,
-    generate_inspection_report, analyze_correction, analyze_history_week,
+    generate_inspection_report, analyze_correction, analyze_history_import,
     answer_help_question,
 )
 from report_generator import generate_pdf_report
@@ -305,7 +306,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /inspection            — FSA inspection readiness report\n\n"
         "DATA MANAGEMENT:\n"
         "  /rename NewName        — Rename your restaurant\n"
-        "  /importweek [dates]: [description] — Import historical data\n"
+        "  /import [dates]: [description] — Import any historical period\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
         "  /ask [question]        — AI-powered help (anything about the bot)\n"
@@ -926,7 +927,7 @@ async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"All data cleared for {restaurant['name']}.\n\n"
         f"Your registration is intact — the bot will continue capturing new messages.\n"
-        f"Use /importweek to backfill historical data if needed."
+        f"Use /import to backfill historical data if needed."
     )
 
 
@@ -971,22 +972,24 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Historical data import ────────────────────────────────────────────────────
 
-async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /importweek [date range]: [description of the week]
-    Import a historical week of data in plain English.
-    The AI creates representative daily entries tagged with the correct dates.
+    /import [date or range]: [description of what happened]
 
-    Format: /importweek 6 Jan 2025 to 12 Jan 2025: [what happened that week]
+    Import historical data covering any period — a single day, a fortnight,
+    a month, a quarter, or any range. The AI creates the right number of
+    dated entries proportional to the period length.
 
-    Examples:
-      /importweek 6 Jan to 12 Jan 2025: Revenue around £16,000, 480 covers.
-      Bidfood main supplier. Fridge issue Tuesday fixed Thursday.
-      Ahmed late 3 times. New lamb dish launched Friday, sold out both nights.
+    Format:
+      /import [date range]: [description]
 
-      /importweek March 2025: Quieter month, about £60,000 total revenue.
-      1,800 covers. Major cost was kitchen refurbishment £4,200.
-      Lost two staff — recruited replacements by end of month.
+    The date range can be anything:
+      5 Jan 2025                          — a single day
+      6 Jan to 12 Jan 2025               — a week
+      1 Jan to 14 Jan 2025               — a fortnight
+      January 2025                        — a full month
+      Jan to March 2025                   — a quarter
+      1 Sept 2024 to 28 Feb 2025         — six months
     """
     restaurant = await _require_restaurant(update)
     if not restaurant:
@@ -994,52 +997,70 @@ async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Import a past week of data in plain English.\n\n"
+            "Import any period of historical data in plain English.\n\n"
             "Format:\n"
-            "  /importweek [date range]: [description]\n\n"
-            "Examples:\n"
-            "  /importweek 6 Jan to 12 Jan 2025: Revenue £16,000, 480 covers.\n"
-            "  Bidfood supplier. Fridge fault Tuesday fixed Thursday.\n\n"
-            "  /importweek March 2025: £60,000 revenue, 1,800 covers.\n"
-            "  Kitchen refurb cost £4,200. Lost 2 staff, replaced by month end.\n\n"
-            "The AI will create dated entries for that week.\n"
-            "Repeat for each week you want to backfill."
+            "  /import [date or range]: [what happened]\n\n"
+            "Examples:\n\n"
+            "Single day:\n"
+            "  /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n"
+            "  New lamb dish launched. Bidfood delivery short on salmon.\n\n"
+            "Fortnight:\n"
+            "  /import 1 Jan to 14 Jan 2025: Quiet post-Christmas period.\n"
+            "  Revenue about £28,000, 900 covers. No major issues.\n\n"
+            "Month:\n"
+            "  /import March 2025: Revenue £72,000, 2,200 covers.\n"
+            "  Bidfood prices up 8%. Ahmed left, replaced by Sara.\n"
+            "  Kitchen deep clean week 2. Record Saturday on the 22nd.\n\n"
+            "Quarter:\n"
+            "  /import Oct to Dec 2024: Best quarter ever. Revenue £210,000.\n"
+            "  Hired 3 staff. New menu launched November. Fridge replaced Dec.\n\n"
+            "Repeat for each period you want to backfill."
         )
         return
 
     full_text = " ".join(context.args)
 
-    # Split on colon to separate date range from description
+    # Split on the first colon to separate date part from description
     if ":" in full_text:
         date_part, description = full_text.split(":", 1)
         date_part = date_part.strip()
         description = description.strip()
     else:
-        # Try to parse first few words as dates
-        date_part = full_text[:50]
+        date_part = full_text
         description = full_text
 
-    # Parse the date range
-    # Try "6 Jan to 12 Jan 2025" or "6 Jan 2025 to 12 Jan 2025" or "March 2025"
+    if not description:
+        await update.message.reply_text(
+            "Please include a description after the date.\n\n"
+            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Main supplier Bidfood."
+        )
+        return
+
+    # Parse the date range — supports "X to Y", single dates, month names, etc.
     date_range = None
-    # Try "X to Y" format
+
     if " to " in date_part.lower():
-        parts = date_part.lower().split(" to ")
+        parts = date_part.lower().split(" to ", 1)
         d1 = _parse_date_range(parts[0].strip())
         d2 = _parse_date_range(parts[1].strip())
         if d1 and d2:
             date_range = (d1[0], d2[1])
+    elif "-" in date_part and not any(m in date_part.lower() for m in ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"]):
+        # Numeric dash range like "1-14 Jan 2025"
+        date_range = _parse_date_range(date_part.strip())
     if not date_range:
         date_range = _parse_date_range(date_part.strip())
 
     if not date_range:
         await update.message.reply_text(
-            f"Couldn't understand the date range \"{date_part}\".\n\n"
-            "Try formats like:\n"
+            f"Couldn't understand the date \"{date_part}\".\n\n"
+            "Accepted formats:\n"
+            "  5 Jan 2025\n"
             "  6 Jan to 12 Jan 2025\n"
-            "  6 January 2025 to 12 January 2025\n"
+            "  1 Jan to 14 Jan 2025\n"
             "  March 2025\n"
-            "  last month"
+            "  Jan to March 2025\n"
+            "  1 Sept 2024 to 28 Feb 2025"
         )
         return
 
@@ -1048,22 +1069,33 @@ async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Refuse to import into the future
     if start_date > date.today().isoformat():
         await update.message.reply_text(
-            f"The date range {_fmt_date(start_date)} is in the future.\n"
+            f"The date {_fmt_date(start_date)} is in the future.\n"
             "You can only import historical data."
         )
         return
 
+    # Cap end date at today if it overshoots
+    if end_date > date.today().isoformat():
+        end_date = date.today().isoformat()
+
+    from datetime import date as _date
+    num_days = max(1, (_date.fromisoformat(end_date) - _date.fromisoformat(start_date)).days + 1)
+
+    period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+
     await update.message.reply_text(
-        f"Importing data for {_fmt_date(start_date)} to {_fmt_date(end_date)}...\n"
-        f"The AI will create entries from your description."
+        f"Importing {num_days} day(s) of data: {period_label}...\n"
+        f"The AI will create proportional entries from your description."
     )
 
-    entries = analyze_history_week(description, start_date, end_date, restaurant["name"])
+    entries = analyze_history_import(description, start_date, end_date, restaurant["name"])
 
     if not entries:
         await update.message.reply_text(
-            "Could not create entries from that description. Try adding more detail:\n"
-            "revenue, covers, supplier names, staff issues, equipment problems."
+            "Could not create entries from that description.\n\n"
+            "Try adding more detail — revenue, covers, supplier names, staff issues, equipment problems.\n"
+            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Bidfood main supplier. "
+            "Fridge broke week 2, repaired same day. Ahmed left 15th. New dessert menu launched."
         )
         return
 
@@ -1072,6 +1104,11 @@ async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for e in entries:
         try:
             entry_date = e.get("date", start_date)
+            # Clamp to range in case AI strays outside it
+            if entry_date < start_date:
+                entry_date = start_date
+            if entry_date > end_date:
+                entry_date = end_date
             entry_time = e.get("time", "12:00:00")
             raw_text = e.get("raw_text", description[:200])
             category = e.get("category", "general")
@@ -1097,19 +1134,20 @@ async def cmd_importweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             saved += 1
         except Exception as ex:
-            logger.warning("importweek: failed to save entry: %s", ex)
+            logger.warning("import: failed to save entry: %s", ex)
 
-    # Show a summary of what was created
     summary_lines = [
-        f"  {_fmt_date(e.get('date', start_date))}  [{e.get('category', 'general')}]  {e.get('summary', '')[:60]}"
-        for e in entries
+        f"  {_fmt_date(e.get('date', start_date))}  [{e.get('category', 'general')}]  {e.get('summary', '')[:65]}"
+        for e in entries[:25]  # Cap display at 25 lines
     ]
+    if len(entries) > 25:
+        summary_lines.append(f"  ... and {len(entries) - 25} more entries")
 
     await update.message.reply_text(
-        f"Imported {saved} entries for {_fmt_date(start_date)} to {_fmt_date(end_date)}:\n\n"
+        f"Imported {saved} entries for {period_label}:\n\n"
         + "\n".join(summary_lines)
-        + f"\n\nUse /recall to review, or /weeklyreport for an AI analysis.\n"
-        f"Run /importweek again for the next week."
+        + f"\n\nUse /recall to review any period.\n"
+        f"Run /import again for the next period to backfill."
     )
 
 
@@ -1658,6 +1696,27 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "══════════════════════════════\n\n"
         "These features are unique to Restaurant-IQ and built specifically\n"
         "for UK legal requirements that every restaurant must meet.\n\n"
+        "/import [date range]: [description]\n"
+        "  Import any historical period in plain English.\n"
+        "  Works for a single day, a fortnight, a month, a quarter, or more.\n"
+        "  The AI creates proportional dated entries from your description.\n\n"
+        "  A single day:\n"
+        "    /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n\n"
+        "  A fortnight:\n"
+        "    /import 1 Jan to 14 Jan 2025: Quiet period, £28,000 revenue,\n"
+        "    900 covers. Bidfood main supplier. No major incidents.\n\n"
+        "  A month:\n"
+        "    /import March 2025: Revenue £72,000, 2,200 covers.\n"
+        "    Bidfood prices up 8%. Ahmed left, Sara started 20th.\n"
+        "    Record Saturday on the 22nd — 98 covers.\n\n"
+        "  A quarter:\n"
+        "    /import Oct to Dec 2024: Revenue £210,000. Hired 3 staff.\n"
+        "    New menu in November. Fridge replaced in December.\n\n"
+        "  Run /import again for each period. Use /recall to check results.\n\n"
+        "/rename [name]\n"
+        "  Change the restaurant name without losing any data.\n\n"
+        "/cleardata CONFIRM\n"
+        "  Delete all entries and start fresh. Registration is kept.\n\n"
         "/tips [period]\n"
         "  Show all tip events logged for a period (default: this month).\n"
         "  Tips are detected automatically from voice notes and messages.\n"
@@ -2135,7 +2194,7 @@ def main():
 
     # Help & onboarding
     app.add_handler(CommandHandler("ask", cmd_ask))
-    app.add_handler(CommandHandler("importweek", cmd_importweek))
+    app.add_handler(CommandHandler("import", cmd_import))
 
     # Support ticket system
     app.add_handler(CommandHandler("support", cmd_support))
