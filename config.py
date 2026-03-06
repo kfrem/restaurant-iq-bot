@@ -3,26 +3,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Required ─────────────────────────────────────────────────────────────────
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_token_here":
     raise ValueError(
-        "TELEGRAM_BOT_TOKEN is not set. "
-        "For local development: add it to your .env file. "
-        "For Railway/cloud: add it as an environment variable in your project settings."
+        "TELEGRAM_BOT_TOKEN is not set.\n"
+        "  → Local dev: copy .env.example to .env and add your bot token\n"
+        "  → Railway: add TELEGRAM_BOT_TOKEN in the Variables tab"
     )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
+if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
     raise ValueError(
-        "GEMINI_API_KEY is not set. "
-        "Get a key from https://aistudio.google.com/app/apikey and add it to your environment variables."
+        "GEMINI_API_KEY is not set. This is required from day one.\n"
+        "  → Get a FREE key at: https://aistudio.google.com/app/apikey\n"
+        "  → Railway: add GEMINI_API_KEY in the Variables tab"
     )
 
-# Model used for text analysis and invoice photo reading (fast, multimodal)
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+# ── Optional — add these in Railway before you hit the thresholds ─────────────
+# 50+ restaurants: Groq (free). Get key at https://console.groq.com/keys
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Model used for weekly report generation (higher quality, larger context)
-GEMINI_REPORT_MODEL = os.getenv("GEMINI_REPORT_MODEL", "gemini-1.5-pro")
+# 100+ restaurants: Anthropic / Claude (paid). Get key at https://console.anthropic.com/
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
-DB_PATH = os.getenv("DB_PATH", "restaurant_iq.db")
+# ── Model names (safe to leave as defaults) ───────────────────────────────────
+GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-2.0-flash")
+
+# ── Other settings ────────────────────────────────────────────────────────────
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+DB_PATH            = os.getenv("DB_PATH",            "restaurant_iq.db")
+
+# ── Support system ────────────────────────────────────────────────────────────
+# Set this to the Telegram chat ID where support tickets should be forwarded.
+# This is the app owner's personal Telegram chat or a private support group.
+# Get your chat ID by messaging @userinfobot on Telegram.
+# Leave unset and support tickets are stored in the DB but not forwarded.
+SUPPORT_CHAT_ID = os.getenv("SUPPORT_CHAT_ID")

@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Restaurant & Food Service Advisory | The Food Economist</title>
+  <meta name="description" content="Specialist food business economics advisory for restaurant operators, food service groups, and hospitality investors. Margin optimisation, strategic growth, and proprietary technology — from a qualified Food Economist with 30+ years in the sector." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,700;0,800;1,700&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:       #1B2766;
+      --navy-dark:  #131d52;
+      --navy-light: #253494;
+      --gold:       #C9971A;
+      --gold-light: #E8B429;
+      --gold-pale:  #FDF5E0;
+      --bg:         #F7F8FA;
+      --white:      #FFFFFF;
+      --text-dark:  #1A1A2E;
+      --text-body:  #3D3D50;
+      --text-muted: #6B7280;
+      --border:     #E2E5EC;
+      --card-shadow: 0 2px 16px rgba(27,39,102,0.08);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      color: var(--text-body);
+      background: var(--white);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── TYPOGRAPHY ─── */
+    h1, h2, h3, h4 { font-family: 'Playfair Display', serif; color: var(--text-dark); line-height: 1.2; }
+    h1 { font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800; }
+    h2 { font-size: clamp(1.6rem, 3vw, 2.4rem); font-weight: 700; }
+    h3 { font-size: clamp(1.1rem, 2vw, 1.4rem); font-weight: 700; }
+    h4 { font-size: 1rem; font-weight: 700; font-family: 'Inter', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; }
+    p { margin-bottom: 1rem; }
+    a { color: var(--gold); text-decoration: none; }
+    a:hover { color: var(--gold-light); }
+
+    /* ─── LAYOUT ─── */
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+    .section { padding: 80px 0; }
+    .section--alt { background: var(--bg); }
+    .section--navy { background: var(--navy); }
+    .section--dark { background: var(--navy-dark); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+
+    /* ─── TOPBAR ─── */
+    .topbar {
+      background: var(--navy-dark);
+      color: rgba(255,255,255,0.75);
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 9px 0;
+      text-align: center;
+      letter-spacing: 0.03em;
+    }
+    .topbar a { color: var(--gold-light); }
+
+    /* ─── NAV ─── */
+    nav {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 68px;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .nav-logo-icon {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 28px;
+    }
+    .nav-logo-icon span {
+      display: block;
+      width: 5px;
+      background: var(--gold);
+      border-radius: 2px;
+    }
+    .nav-logo-icon span:nth-child(1) { height: 14px; }
+    .nav-logo-icon span:nth-child(2) { height: 20px; }
+    .nav-logo-icon span:nth-child(3) { height: 28px; }
+    .nav-logo-icon span:nth-child(4) { height: 22px; }
+    .nav-logo-text {
+      font-family: 'Playfair Display', serif;
+      font-weight: 700;
+      font-size: 1.15rem;
+      color: var(--navy);
+    }
+    .nav-logo-sub {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--gold);
+      display: block;
+      margin-top: -2px;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--text-dark);
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--navy); }
+    .btn { display: inline-block; padding: 11px 24px; border-radius: 4px; font-weight: 600; font-size: 0.88rem; letter-spacing: 0.02em; cursor: pointer; transition: all 0.2s; border: none; }
+    .btn-navy { background: var(--navy); color: var(--white); }
+    .btn-navy:hover { background: var(--navy-light); color: var(--white); }
+    .btn-gold { background: var(--gold); color: var(--white); }
+    .btn-gold:hover { background: var(--gold-light); color: var(--white); }
+    .btn-outline { background: transparent; border: 2px solid var(--white); color: var(--white); }
+    .btn-outline:hover { background: var(--white); color: var(--navy); }
+    .btn-lg { padding: 15px 36px; font-size: 0.95rem; }
+
+    /* ─── HERO ─── */
+    .hero {
+      background: var(--navy);
+      padding: 90px 0 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -60px; right: -80px;
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(201,151,26,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-eyebrow {
+      display: inline-block;
+      background: rgba(201,151,26,0.15);
+      border: 1px solid rgba(201,151,26,0.4);
+      color: var(--gold-light);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      border-radius: 3px;
+      margin-bottom: 24px;
+    }
+    .hero h1 { color: var(--white); max-width: 720px; margin-bottom: 22px; }
+    .hero h1 em { font-style: normal; color: var(--gold-light); }
+    .hero-sub {
+      color: rgba(255,255,255,0.78);
+      font-size: 1.08rem;
+      max-width: 580px;
+      margin-bottom: 36px;
+      line-height: 1.7;
+    }
+    .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    .hero-note {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.5);
+      margin-top: 18px;
+    }
+
+    /* ─── CREDENTIAL BAR ─── */
+    .cred-bar {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 0;
+    }
+    .cred-list {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 36px;
+    }
+    .cred-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-dark);
+    }
+    .cred-item::before {
+      content: '✓';
+      color: var(--gold);
+      font-weight: 800;
+      font-size: 1rem;
+    }
+
+    /* ─── SECTION HEADER ─── */
+    .section-header { text-align: center; margin-bottom: 56px; }
+    .section-label {
+      display: inline-block;
+      color: var(--gold);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .section-header h2 { margin-bottom: 16px; }
+    .section-header p { color: var(--text-muted); max-width: 580px; margin: 0 auto; font-size: 1.02rem; }
+
+    /* ─── PAIN SECTION ─── */
+    .pain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+    .pain-card {
+      background: var(--white);
+      padding: 36px 28px;
+      border-top: 4px solid var(--navy);
+    }
+    .pain-card:nth-child(2) { border-top-color: var(--gold); }
+    .pain-card:nth-child(3) { border-top-color: var(--navy-light); }
+    .pain-number {
+      font-size: 2.4rem;
+      font-weight: 800;
+      color: var(--gold);
+      line-height: 1;
+      margin-bottom: 12px;
+      font-family: 'Playfair Display', serif;
+    }
+    .pain-card h3 { margin-bottom: 10px; font-size: 1.05rem; }
+    .pain-card p { color: var(--text-muted); font-size: 0.92rem; margin: 0; }
+
+    /* ─── PRACTICE AREAS ─── */
+    .practice-area {
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--white);
+      box-shadow: var(--card-shadow);
+    }
+    .practice-area-header {
+      background: var(--navy);
+      padding: 24px 28px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .practice-area-header h3 {
+      color: var(--white);
+      font-size: 1.1rem;
+      margin-bottom: 4px;
+    }
+    .practice-area-header p {
+      color: rgba(255,255,255,0.65);
+      font-size: 0.8rem;
+      margin: 0;
+    }
+    .practice-badge {
+      background: var(--gold);
+      color: var(--white);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 3px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .practice-area-body { padding: 24px 28px; }
+    .service-item {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .service-item:last-child { border-bottom: none; padding-bottom: 0; }
+    .service-icon {
+      width: 8px;
+      height: 8px;
+      background: var(--gold);
+      border-radius: 50%;
+      margin-top: 7px;
+      flex-shrink: 0;
+    }
+    .service-item h4 {
+      font-size: 0.88rem;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      color: var(--text-dark);
+      text-transform: none;
+      letter-spacing: 0;
+      margin-bottom: 3px;
+    }
+    .service-item p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin: 0;
+      line-height: 1.5;
+    }
+    .practice-area-footer {
+      background: var(--bg);
+      padding: 16px 28px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .price-range {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--gold);
+    }
+    .price-label { font-size: 0.72rem; color: var(--text-muted); display: block; }
+
+    /* ─── TECHNOLOGY ─── */
+    .tech-card {
+      background: var(--navy);
+      border-radius: 8px;
+      padding: 40px;
+      color: var(--white);
+      position: relative;
+      overflow: hidden;
+    }
+    .tech-card::after {
+      content: '';
+      position: absolute;
+      bottom: -40px; right: -40px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: rgba(201,151,26,0.08);
+      pointer-events: none;
+    }
+    .tech-tag {
+      display: inline-block;
+      background: rgba(201,151,26,0.2);
+      color: var(--gold-light);
+      border: 1px solid rgba(201,151,26,0.35);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 3px;
+      margin-bottom: 20px;
+    }
+    .tech-card h3 { color: var(--white); font-size: 1.5rem; margin-bottom: 14px; }
+    .tech-card p { color: rgba(255,255,255,0.72); font-size: 0.92rem; line-height: 1.7; }
+    .tech-features { list-style: none; margin-top: 20px; }
+    .tech-features li {
+      color: rgba(255,255,255,0.8);
+      font-size: 0.88rem;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .tech-features li::before { content: '→'; color: var(--gold-light); font-weight: 700; }
+    .tech-features li:last-child { border-bottom: none; }
+
+    /* ─── ENGAGEMENT MODELS ─── */
+    .engage-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 32px 28px;
+      box-shadow: var(--card-shadow);
+      position: relative;
+    }
+    .engage-card.featured {
+      border-color: var(--gold);
+      border-width: 2px;
+    }
+    .engage-card.featured::before {
+      content: 'MOST POPULAR';
+      position: absolute;
+      top: -12px; left: 50%; transform: translateX(-50%);
+      background: var(--gold);
+      color: var(--white);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+    .engage-num {
+      font-size: 2.5rem;
+      font-weight: 800;
+      font-family: 'Playfair Display', serif;
+      color: var(--navy);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .engage-card h3 { font-size: 1rem; font-family: 'Inter', sans-serif; font-weight: 700; margin-bottom: 10px; color: var(--text-dark); }
+    .engage-card p { font-size: 0.84rem; color: var(--text-muted); margin: 0; }
+    .engage-best { font-size: 0.72rem; color: var(--gold); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 14px; }
+
+    /* ─── ABOUT ─── */
+    .about-wrapper {
+      display: grid;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 64px;
+      align-items: start;
+    }
+    .about-sidebar {
+      background: var(--navy);
+      border-radius: 6px;
+      padding: 36px;
+      color: var(--white);
+      position: sticky;
+      top: 90px;
+    }
+    .about-name {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.5rem;
+      color: var(--white);
+      margin-bottom: 4px;
+    }
+    .about-title {
+      color: var(--gold-light);
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .about-quals { list-style: none; }
+    .about-quals li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.82);
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .about-quals li:last-child { border-bottom: none; }
+    .about-quals li::before { content: '✓'; color: var(--gold-light); font-weight: 800; flex-shrink: 0; }
+    .about-content h2 { margin-bottom: 20px; }
+    .about-content p { color: var(--text-body); margin-bottom: 18px; }
+    .about-pull {
+      border-left: 4px solid var(--gold);
+      padding: 18px 24px;
+      background: var(--gold-pale);
+      border-radius: 0 6px 6px 0;
+      margin: 28px 0;
+    }
+    .about-pull p {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.1rem;
+      color: var(--navy);
+      font-style: italic;
+      margin: 0;
+      line-height: 1.6;
+    }
+    .method-box {
+      background: var(--navy);
+      border-radius: 6px;
+      padding: 28px;
+      margin-top: 28px;
+    }
+    .method-box h4 {
+      color: var(--gold-light);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .method-box p { color: rgba(255,255,255,0.78); font-size: 0.88rem; margin: 0; }
+
+    /* ─── PROCESS ─── */
+    .process-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
+    .process-steps::before {
+      content: '';
+      position: absolute;
+      top: 28px; left: 12.5%; right: 12.5%;
+      height: 2px;
+      background: var(--border);
+      z-index: 0;
+    }
+    .process-step { text-align: center; padding: 0 16px; position: relative; z-index: 1; }
+    .step-num {
+      width: 56px; height: 56px;
+      background: var(--navy);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--white);
+      font-weight: 800;
+      font-size: 1.1rem;
+      margin: 0 auto 18px;
+      font-family: 'Playfair Display', serif;
+      border: 3px solid var(--white);
+      box-shadow: 0 0 0 2px var(--navy);
+    }
+    .process-step h4 {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--text-dark);
+      margin-bottom: 8px;
+    }
+    .process-step p { font-size: 0.8rem; color: var(--text-muted); margin: 0; }
+
+    /* ─── CTA SECTION ─── */
+    .cta-section {
+      background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 60%, var(--navy-light) 100%);
+      padding: 90px 0;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .cta-section::before {
+      content: '';
+      position: absolute;
+      top: -100px; left: 50%;
+      transform: translateX(-50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(ellipse, rgba(201,151,26,0.12) 0%, transparent 70%);
+    }
+    .cta-section h2 { color: var(--white); margin-bottom: 16px; max-width: 640px; margin-left: auto; margin-right: auto; }
+    .cta-section p { color: rgba(255,255,255,0.72); font-size: 1.02rem; max-width: 520px; margin: 0 auto 36px; }
+    .cta-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .cta-note { margin-top: 20px; font-size: 0.8rem; color: rgba(255,255,255,0.45); }
+
+    /* ─── CONTACT FORM ─── */
+    .contact-wrapper {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 64px;
+      align-items: start;
+    }
+    .contact-info h2 { margin-bottom: 16px; }
+    .contact-info p { color: var(--text-muted); margin-bottom: 28px; }
+    .contact-detail {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .contact-detail:last-child { border-bottom: none; }
+    .contact-detail-icon {
+      width: 38px; height: 38px;
+      background: var(--navy);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+    .contact-detail strong { display: block; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dark); margin-bottom: 2px; }
+    .contact-detail span { font-size: 0.88rem; color: var(--text-muted); }
+    .form-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 40px;
+      box-shadow: var(--card-shadow);
+    }
+    .form-card h3 { margin-bottom: 6px; font-size: 1.2rem; }
+    .form-card .form-sub { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 28px; }
+    .form-group { margin-bottom: 18px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-dark); margin-bottom: 6px; letter-spacing: 0.03em; }
+    input, select, textarea {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.88rem;
+      color: var(--text-dark);
+      background: var(--white);
+      transition: border-color 0.2s;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--navy); }
+    textarea { resize: vertical; min-height: 100px; }
+    .form-submit { width: 100%; padding: 14px; background: var(--navy); color: var(--white); border: none; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.92rem; font-weight: 700; cursor: pointer; letter-spacing: 0.03em; transition: background 0.2s; }
+    .form-submit:hover { background: var(--gold); }
+    .form-privacy { font-size: 0.73rem; color: var(--text-muted); text-align: center; margin-top: 12px; }
+
+    /* ─── FOOTER ─── */
+    footer {
+      background: var(--navy-dark);
+      color: rgba(255,255,255,0.65);
+      padding: 56px 0 32px;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+      gap: 48px;
+      padding-bottom: 40px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      margin-bottom: 28px;
+    }
+    .footer-brand p { font-size: 0.83rem; line-height: 1.7; margin-top: 14px; }
+    .footer-col h4 {
+      color: var(--white);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+    .footer-col ul { list-style: none; }
+    .footer-col ul li { margin-bottom: 10px; }
+    .footer-col ul li a { color: rgba(255,255,255,0.6); font-size: 0.84rem; transition: color 0.2s; }
+    .footer-col ul li a:hover { color: var(--gold-light); }
+    .footer-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .footer-bottom p { font-size: 0.78rem; margin: 0; }
+    .footer-bottom a { color: rgba(255,255,255,0.5); }
+    .footer-disclaimer {
+      font-size: 0.72rem;
+      color: rgba(255,255,255,0.35);
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 20px;
+      margin-top: 20px;
+      line-height: 1.6;
+    }
+
+    /* ─── UTILITY ─── */
+    .text-center { text-align: center; }
+    .text-white { color: var(--white); }
+    .text-gold { color: var(--gold); }
+    .mb-0 { margin-bottom: 0; }
+    .mb-8 { margin-bottom: 8px; }
+    .mb-16 { margin-bottom: 16px; }
+    .mb-24 { margin-bottom: 24px; }
+    .mt-8 { margin-top: 8px; }
+    .mt-16 { margin-top: 16px; }
+    .mt-32 { margin-top: 32px; }
+    .divider { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+    .tag {
+      display: inline-block;
+      background: var(--navy);
+      color: var(--white);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      padding: 3px 9px;
+      border-radius: 3px;
+    }
+    .tag-gold { background: var(--gold); }
+
+    /* ─── STATS BAR ─── */
+    .stats-bar {
+      background: var(--gold-pale);
+      border-top: 1px solid rgba(201,151,26,0.2);
+      border-bottom: 1px solid rgba(201,151,26,0.2);
+      padding: 28px 0;
+    }
+    .stats-list { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 24px; }
+    .stat-item { text-align: center; }
+    .stat-number {
+      font-family: 'Playfair Display', serif;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--navy);
+      line-height: 1;
+      display: block;
+    }
+    .stat-label { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; margin-top: 4px; display: block; }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 1024px) {
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .footer-grid { grid-template-columns: 1fr 1fr; }
+      .about-wrapper { grid-template-columns: 1fr; gap: 40px; }
+      .about-sidebar { position: static; }
+      .process-steps { grid-template-columns: repeat(2, 1fr); gap: 32px; }
+      .process-steps::before { display: none; }
+    }
+    @media (max-width: 768px) {
+      .section { padding: 56px 0; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .pain-grid { grid-template-columns: 1fr; gap: 2px; }
+      .nav-links { display: none; }
+      .hero { padding: 60px 0; }
+      .contact-wrapper { grid-template-columns: 1fr; }
+      .form-row { grid-template-columns: 1fr; }
+      .footer-grid { grid-template-columns: 1fr; }
+      .footer-bottom { flex-direction: column; text-align: center; }
+      .cta-actions { flex-direction: column; align-items: center; }
+      .process-steps { grid-template-columns: 1fr; }
+      .hero-actions { flex-direction: column; }
+      .btn-lg { width: 100%; text-align: center; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    Part of <a href="https://thefoodeconomist.co.uk">The Food Economist Group</a> &nbsp;|&nbsp;
+    Also serving food manufacturers &amp; brand owners:&nbsp;
+    <a href="https://thefoodeconomist.co.uk">EPR &amp; Packaging Compliance →</a>
+  </div>
+
+  <!-- NAV -->
+  <nav>
+    <div class="container">
+      <div class="nav-inner">
+        <a href="#" class="nav-logo">
+          <div class="nav-logo-icon">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <div>
+            <div class="nav-logo-text">The Food Economist</div>
+            <span class="nav-logo-sub">Advisory</span>
+          </div>
+        </a>
+        <ul class="nav-links">
+          <li><a href="#practice-areas">Practice Areas</a></li>
+          <li><a href="#technology">Technology</a></li>
+          <li><a href="#about">About</a></li>
+          <li><a href="#contact">Contact</a></li>
+        </ul>
+        <a href="#contact" class="btn btn-navy">Book a Discovery Call</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-eyebrow">Restaurant &amp; Food Service Advisory</div>
+      <h1>Your Food Business Deserves<br /><em>Institutional-Grade</em> Economic Intelligence.</h1>
+      <p class="hero-sub">
+        We work with restaurant operators, food service groups, and hospitality investors who are serious about margin, sustainable growth, and long-term value — at every stage of the business lifecycle.
+      </p>
+      <div class="hero-actions">
+        <a href="#contact" class="btn btn-gold btn-lg">Book a Free Discovery Call</a>
+        <a href="#practice-areas" class="btn btn-outline btn-lg">Explore Practice Areas</a>
+      </div>
+      <p class="hero-note">No obligation. 30-minute consultation. Conducted by the Lead Economist personally.</p>
+    </div>
+  </section>
+
+  <!-- CREDENTIAL BAR -->
+  <div class="cred-bar">
+    <div class="container">
+      <div class="cred-list">
+        <div class="cred-item">FCCA Qualified</div>
+        <div class="cred-item">MSc Food Economics &amp; Marketing</div>
+        <div class="cred-item">DEFRA Registered Stakeholder</div>
+        <div class="cred-item">UK Export Academy Member</div>
+        <div class="cred-item">30+ Years in Food Business</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="container">
+      <div class="stats-list">
+        <div class="stat-item">
+          <span class="stat-number">30+</span>
+          <span class="stat-label">Years in food sector economics</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">4</span>
+          <span class="stat-label">Specialist practice areas</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">2</span>
+          <span class="stat-label">Proprietary technology platforms</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">£0–£25M</span>
+          <span class="stat-label">Revenue range we serve</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE CHALLENGE -->
+  <section class="section section--alt">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">The Challenge</div>
+        <h2>Three Realities Facing Every Food Service Operator</h2>
+        <p>These are not opinions. They are structural conditions that define whether a food business creates or destroys value.</p>
+      </div>
+      <div class="pain-grid">
+        <div class="pain-card">
+          <div class="pain-number">80%</div>
+          <h3>of restaurants cannot accurately state their food cost percentage this week</h3>
+          <p>Without live cost intelligence, every menu decision, every supplier negotiation, and every pricing call is made in the dark.</p>
+        </div>
+        <div class="pain-card">
+          <div class="pain-number">60%</div>
+          <h3>of food businesses that fail were technically profitable on paper</h3>
+          <p>Cash flow timing, unrecorded wage costs, and VAT mismanagement destroy businesses that appear to be working.</p>
+        </div>
+        <div class="pain-card">
+          <div class="pain-number">3×</div>
+          <h3>more complex to manage a second site than operators typically anticipate</h3>
+          <p>Without the right systems, economics, and advisory support, expansion accelerates the problems already present in site one.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRACTICE AREAS -->
+  <section class="section" id="practice-areas">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Our Practice Areas</div>
+        <h2>Four Specialist Disciplines.<br />One Integrated Advisory.</h2>
+        <p>The Food Economist Advisory operates across four practice areas, each underpinned by the same core discipline: food economics applied to real commercial decisions.</p>
+      </div>
+
+      <div class="grid-2">
+
+        <!-- Practice 1 -->
+        <div class="practice-area">
+          <div class="practice-area-header">
+            <div>
+              <h3>Strategic Economics</h3>
+              <p>Feasibility, expansion, and exit — at every scale</p>
+            </div>
+            <div class="practice-badge">Tier 1</div>
+          </div>
+          <div class="practice-area-body">
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Restaurant Setup &amp; Concept Feasibility</h4>
+                <p>Full financial model before you sign the lease. Startup cost build, break-even analysis, licensing roadmap, and 90-day launch plan.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Multi-Site Expansion Advisory</h4>
+                <p>Group financial structure, site viability modelling, central procurement strategy, and operational replication playbook for growing operators.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Business Valuation &amp; Sale Preparation</h4>
+                <p>EBITDA-based valuation, information memorandum, normalised accounts, deal structure advisory, and buyer negotiation support.</p>
+              </div>
+            </div>
+          </div>
+          <div class="practice-area-footer">
+            <div>
+              <span class="price-label">Typical engagement</span>
+              <span class="price-range">£2,500 – £8,000</span>
+            </div>
+            <a href="#contact" class="btn btn-navy" style="font-size:0.8rem; padding:9px 18px;">Enquire</a>
+          </div>
+        </div>
+
+        <!-- Practice 2 -->
+        <div class="practice-area">
+          <div class="practice-area-header">
+            <div>
+              <h3>Operational Economics</h3>
+              <p>Margin architecture across menu, labour, and systems</p>
+            </div>
+            <div class="practice-badge">Tier 2</div>
+          </div>
+          <div class="practice-area-body">
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Menu Engineering &amp; Food Cost Optimisation</h4>
+                <p>Full menu costing, matrix analysis, GP% target setting by category, supplier benchmarking, and waste reduction protocols.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Labour &amp; Scheduling Economics</h4>
+                <p>Wage cost benchmarking, break-even covers-per-shift modelling, rota analysis, tronc structuring, and seasonal staffing planning.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Operations Audit &amp; Systems Design</h4>
+                <p>Full operational review, SOP library build, technology stack recommendation, and 30-day handover — so the business runs on systems, not instinct.</p>
+              </div>
+            </div>
+          </div>
+          <div class="practice-area-footer">
+            <div>
+              <span class="price-label">Typical engagement</span>
+              <span class="price-range">£1,250 – £3,500</span>
+            </div>
+            <a href="#contact" class="btn btn-navy" style="font-size:0.8rem; padding:9px 18px;">Enquire</a>
+          </div>
+        </div>
+
+        <!-- Practice 3 -->
+        <div class="practice-area">
+          <div class="practice-area-header">
+            <div>
+              <h3>Financial Economics</h3>
+              <p>Intelligence, pricing, and recovery — grounded in your actual numbers</p>
+            </div>
+            <div class="practice-badge">Tier 3</div>
+          </div>
+          <div class="practice-area-body">
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Food Business Performance Review</h4>
+                <p>Restructured P&amp;L into food-sector format, 12-month trailing analysis, KPI benchmarking against industry norms, and management information template.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Pricing Strategy &amp; Revenue Optimisation</h4>
+                <p>Price sensitivity analysis, competitor mapping, dynamic pricing, delivery platform impact modelling, and break-even per dish.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon"></div>
+              <div>
+                <h4>Turnaround &amp; Recovery Economics</h4>
+                <p>Emergency cash flow forecast, creditor priority mapping, immediate cost reduction plan, and decision framework: rescue, restructure, or exit.</p>
+              </div>
+            </div>
+          </div>
+          <div class="practice-area-footer">
+            <div>
+              <span class="price-label">Typical engagement</span>
+              <span class="price-range">£950 – £4,000</span>
+            </div>
+            <a href="#contact" class="btn btn-navy" style="font-size:0.8rem; padding:9px 18px;">Enquire</a>
+          </div>
+        </div>
+
+        <!-- Practice 4 -->
+        <div class="practice-area" style="border-color: var(--gold); border-width: 2px;">
+          <div class="practice-area-header" style="background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 100%);">
+            <div>
+              <h3>Retained Advisory</h3>
+              <p>Ongoing food economics leadership for serious operators</p>
+            </div>
+            <div class="practice-badge" style="background: var(--gold);">Premium</div>
+          </div>
+          <div class="practice-area-body">
+            <div class="service-item">
+              <div class="service-icon" style="background: var(--gold);"></div>
+              <div>
+                <h4>The Embedded Food Finance Director™</h4>
+                <p>Monthly performance review, cash flow monitoring, supplier negotiation support, pricing updates via Flivio, and one management meeting per month.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon" style="background: var(--gold);"></div>
+              <div>
+                <h4>Technology Platform Management</h4>
+                <p>Full Restaurant-IQ and Flivio stack maintained, monitored, and interpreted on your behalf. Weekly reports reviewed and actioned.</p>
+              </div>
+            </div>
+            <div class="service-item">
+              <div class="service-icon" style="background: var(--gold);"></div>
+              <div>
+                <h4>Strategic &amp; Tax Planning (Food Sector)</h4>
+                <p>Proactive planning across VAT, income, and corporate structure — always anchored in the economics of the food business.</p>
+              </div>
+            </div>
+          </div>
+          <div class="practice-area-footer" style="background: var(--gold-pale);">
+            <div>
+              <span class="price-label">Monthly retainer from</span>
+              <span class="price-range">£750 / month</span>
+            </div>
+            <a href="#contact" class="btn btn-gold" style="font-size:0.8rem; padding:9px 18px;">Apply Now</a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- TECHNOLOGY -->
+  <section class="section section--navy" id="technology">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label" style="color: var(--gold-light);">Proprietary Technology</div>
+        <h2 class="text-white">Every Engagement Is Powered<br />by Data, Not Opinion.</h2>
+        <p style="color: rgba(255,255,255,0.65);">Unlike generalist consultants, every recommendation we make is grounded in your live business data — captured and processed by two proprietary platforms built specifically for the food and hospitality sector.</p>
+      </div>
+
+      <div class="grid-2">
+
+        <div class="tech-card">
+          <div class="tech-tag">Platform 1</div>
+          <h3>Restaurant-IQ</h3>
+          <p>Your team already uses messaging apps. Restaurant-IQ turns those everyday communications into a structured weekly intelligence report — without changing a single habit.</p>
+          <ul class="tech-features">
+            <li>Voice notes from staff transcribed and categorised automatically</li>
+            <li>Invoice photos captured, read, and entered — no manual data entry</li>
+            <li>Text updates tagged by category: waste, revenue, staffing, incidents</li>
+            <li>Weekly summary report delivered directly in Telegram</li>
+            <li>Branded A4 PDF — ready for management review or board packs</li>
+            <li>Scales across multiple sites from a single installation</li>
+          </ul>
+          <div style="margin-top: 24px;">
+            <a href="https://restaurantiq.thefoodeconomist.co.uk" class="btn btn-gold" style="font-size:0.82rem;">Learn More →</a>
+          </div>
+        </div>
+
+        <div class="tech-card" style="background: linear-gradient(135deg, #0f1a4d 0%, #1B2766 100%);">
+          <div class="tech-tag">Platform 2</div>
+          <h3>Flivio</h3>
+          <p>Live food cost intelligence at dish level. Flivio turns your purchasing and sales data into real-time margin visibility — so you never discover a cost problem at month end.</p>
+          <ul class="tech-features">
+            <li>Live margin tracking per dish, per week, per site</li>
+            <li>Instant impact modelling when ingredient costs change</li>
+            <li>Supplier cost comparison and variance alerts</li>
+            <li>Group dashboard for multi-site operators</li>
+            <li>Direct integration with Restaurant-IQ invoice capture</li>
+            <li>Board-ready export in one click</li>
+          </ul>
+          <div style="margin-top: 24px;">
+            <a href="https://flivio.thefoodeconomist.co.uk" class="btn btn-gold" style="font-size:0.82rem;">Learn More →</a>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="text-align: center; margin-top: 48px; padding: 32px; background: rgba(255,255,255,0.06); border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);">
+        <p style="color: rgba(255,255,255,0.85); font-size: 1.05rem; max-width: 660px; margin: 0 auto; font-family: 'Playfair Display', serif; font-style: italic; line-height: 1.7;">
+          "Both platforms are deployed inside every client engagement. You don't just get advice — you get a permanent intelligence infrastructure that keeps working long after the engagement ends."
+        </p>
+        <p style="color: var(--gold-light); font-size: 0.8rem; font-weight: 600; margin-top: 14px; margin-bottom: 0;">— Godfred Frimpong FCCA MSc, Lead Economist</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- HOW WE WORK -->
+  <section class="section section--alt">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Our Process</div>
+        <h2>From First Call to Measurable Outcome</h2>
+        <p>Every engagement follows the same four-stage framework — grounded in economics, driven by your data, and focused entirely on commercial results.</p>
+      </div>
+      <div class="process-steps">
+        <div class="process-step">
+          <div class="step-num">1</div>
+          <h4>Discovery</h4>
+          <p>30-minute call to understand your business stage, key challenges, and what a successful outcome looks like. No charge, no obligation.</p>
+        </div>
+        <div class="process-step">
+          <div class="step-num">2</div>
+          <h4>Diagnostic</h4>
+          <p>We review your current numbers, operations, and technology — identifying the specific economic levers with the highest impact.</p>
+        </div>
+        <div class="process-step">
+          <div class="step-num">3</div>
+          <h4>Delivery</h4>
+          <p>A scoped engagement with clear deliverables, timelines, and milestones. Technology platforms deployed where relevant. You always know exactly what you are getting.</p>
+        </div>
+        <div class="process-step">
+          <div class="step-num">4</div>
+          <h4>Continuity</h4>
+          <p>Optional retained advisory to maintain the intelligence systems, monitor performance, and respond to strategic decisions as they arise.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ENGAGEMENT MODELS -->
+  <section class="section">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Engagement Options</div>
+        <h2>Choose How You Work With Us</h2>
+        <p>Every business has a different starting point. We offer four engagement formats to match where you are.</p>
+      </div>
+      <div class="grid-4">
+        <div class="engage-card">
+          <div class="engage-num">01</div>
+          <h3>Diagnostic Day</h3>
+          <p>Full-day on-site review with a same-day findings report. Immediate clarity on your biggest economic vulnerabilities and opportunities.</p>
+          <p class="engage-best">Best for: First-time clients</p>
+        </div>
+        <div class="engage-card featured">
+          <div class="engage-num">02</div>
+          <h3>Project Engagement</h3>
+          <p>A defined scope, fixed investment, and a clear deliverable from one of our four practice areas. Most engagements complete in 2–6 weeks.</p>
+          <p class="engage-best">Best for: Specific challenges</p>
+        </div>
+        <div class="engage-card">
+          <div class="engage-num">03</div>
+          <h3>Monthly Retainer</h3>
+          <p>Ongoing advisory plus full technology platform management. Senior-level food economics expertise at a fraction of a full-time hire.</p>
+          <p class="engage-best">Best for: Growing operators</p>
+        </div>
+        <div class="engage-card">
+          <div class="engage-num">04</div>
+          <h3>Annual Partnership</h3>
+          <p>All-in advisory across all four practice areas, both technology platforms, and quarterly strategic reviews. Reserved for serious operators.</p>
+          <p class="engage-best">Best for: Groups &amp; investors</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <section class="section section--alt" id="about">
+    <div class="container">
+      <div class="about-wrapper">
+        <div class="about-sidebar">
+          <div class="about-name">Godfred Frimpong</div>
+          <div class="about-title">FCCA MSc &nbsp;|&nbsp; Lead Food Economist</div>
+          <ul class="about-quals">
+            <li>Fellow of the Association of Chartered Certified Accountants (FCCA)</li>
+            <li>MSc Food Economics &amp; Marketing — University of Reading</li>
+            <li>30+ years in food &amp; agricultural financial management</li>
+            <li>DEFRA Registered Stakeholder — EPR consultations since 2023</li>
+            <li>UK Export Academy Member — Department for Business &amp; Trade</li>
+            <li>Trade Economist with active advisory across the food value chain</li>
+          </ul>
+          <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.12);">
+            <div style="font-size: 0.72rem; color: rgba(255,255,255,0.5); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px;">Direct Contact</div>
+            <p style="font-size: 0.84rem; color: rgba(255,255,255,0.75); margin-bottom: 6px;">godfred@thefoodeconomist.co.uk</p>
+            <p style="font-size: 0.84rem; color: rgba(255,255,255,0.75); margin-bottom: 6px;">+44 7459 866 535</p>
+            <p style="font-size: 0.84rem; color: rgba(255,255,255,0.75); margin: 0;">61 Bridge Street, Kington HR5 3DJ</p>
+          </div>
+        </div>
+
+        <div class="about-content">
+          <div class="section-label">About The Economist</div>
+          <h2>The Analyst Behind the Advisory</h2>
+
+          <p>The Food Economist Advisory exists because most food businesses — regardless of size — operate without the economic intelligence they need to make consistently good decisions. They rely on intuition, year-end figures, and advice from generalists who have never managed a food cost or read a menu matrix.</p>
+
+          <p>Godfred Frimpong founded this practice after three decades working at the intersection of food sector economics and financial management — advising businesses ranging from independent operators to food manufacturers serving major UK retailers.</p>
+
+          <div class="about-pull">
+            <p>"My background is unusual. I combine the analytical discipline of professional financial qualifications with an MSc dedicated specifically to food economics. There are very few practitioners who occupy both spaces — and that combination is precisely why this advisory works."</p>
+          </div>
+
+          <p>The food and hospitality sector is unlike any other. Margins are thin, costs move daily, consumer behaviour is unpredictable, and the regulatory environment — from EPR packaging obligations to food safety compliance — is tightening. Generic business advice does not translate. Economic thinking specific to food does.</p>
+
+          <p>Every engagement is conducted personally. There are no junior associates, no templated reports, and no recycled recommendations. What you receive is the result of applying three decades of food sector economic experience to your specific situation — supported by two proprietary technology platforms that provide the data integrity most consultants never achieve.</p>
+
+          <div class="method-box">
+            <h4>The Food Business Intelligence System™</h4>
+            <p>All advisory work is underpinned by a proprietary methodology that combines food economics modelling, live cost intelligence (via Flivio), and operational data capture (via Restaurant-IQ) to produce analysis of a standard typically reserved for institutional investors — applied to real food businesses of every size.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA SECTION -->
+  <section class="cta-section">
+    <div class="container" style="position: relative; z-index: 1;">
+      <div class="section-label" style="color: var(--gold-light);">Start Here</div>
+      <h2>Know Your Numbers.<br />Own Your Margins.<br />Build a Business That Lasts.</h2>
+      <p>The first conversation costs nothing. Book a 30-minute discovery call with Godfred directly — and leave with at least one concrete action you can take immediately.</p>
+      <div class="cta-actions">
+        <a href="#contact" class="btn btn-gold btn-lg">Book a Discovery Call</a>
+        <a href="https://wa.me/447459866535" class="btn btn-outline btn-lg" target="_blank">WhatsApp the Lead Economist</a>
+      </div>
+      <p class="cta-note">No sales team. No automated sequences. A direct conversation with the person who will actually do the work.</p>
+    </div>
+  </section>
+
+  <!-- CONTACT -->
+  <section class="section" id="contact">
+    <div class="container">
+      <div class="contact-wrapper">
+        <div class="contact-info">
+          <div class="section-label">Get in Touch</div>
+          <h2>Book Your Discovery Call</h2>
+          <p>Tell us about your business and what you are trying to solve. We will respond within one working day to confirm a time that works.</p>
+
+          <div class="contact-detail">
+            <div class="contact-detail-icon">📧</div>
+            <div>
+              <strong>Email</strong>
+              <span>godfred@thefoodeconomist.co.uk</span>
+            </div>
+          </div>
+          <div class="contact-detail">
+            <div class="contact-detail-icon">📞</div>
+            <div>
+              <strong>Phone</strong>
+              <span>+44 7459 866 535</span>
+            </div>
+          </div>
+          <div class="contact-detail">
+            <div class="contact-detail-icon">💬</div>
+            <div>
+              <strong>WhatsApp</strong>
+              <span><a href="https://wa.me/447459866535" target="_blank">Chat with the Lead Economist →</a></span>
+            </div>
+          </div>
+          <div class="contact-detail">
+            <div class="contact-detail-icon">📍</div>
+            <div>
+              <strong>Office</strong>
+              <span>61 Bridge Street, Kington, HR5 3DJ</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 36px; padding: 24px; background: var(--gold-pale); border-left: 4px solid var(--gold); border-radius: 0 6px 6px 0;">
+            <div class="section-label" style="margin-bottom: 8px;">Also serving</div>
+            <p style="font-size: 0.88rem; color: var(--text-body); margin: 0;">Food manufacturers and brand owners facing <strong>EPR packaging compliance</strong> and statutory liability obligations. Visit <a href="https://thefoodeconomist.co.uk" style="color: var(--navy); font-weight: 600;">thefoodeconomist.co.uk</a> for specialist packaging advisory.</p>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <h3>Request a Discovery Call</h3>
+          <p class="form-sub">All enquiries are reviewed personally by Godfred. We respond within one working day.</p>
+
+          <form action="#" method="POST">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="first_name">First Name</label>
+                <input type="text" id="first_name" name="first_name" placeholder="James" required />
+              </div>
+              <div class="form-group">
+                <label for="last_name">Last Name</label>
+                <input type="text" id="last_name" name="last_name" placeholder="Mitchell" required />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="email">Email Address</label>
+              <input type="email" id="email" name="email" placeholder="james@yourrestaurant.co.uk" required />
+            </div>
+
+            <div class="form-group">
+              <label for="phone">Phone Number</label>
+              <input type="tel" id="phone" name="phone" placeholder="+44 7700 000 000" />
+            </div>
+
+            <div class="form-group">
+              <label for="business">Restaurant / Business Name</label>
+              <input type="text" id="business" name="business" placeholder="The Copper Kettle Group" required />
+            </div>
+
+            <div class="form-group">
+              <label for="stage">Business Stage</label>
+              <select id="stage" name="stage">
+                <option value="">Select your current stage...</option>
+                <option value="planning">Planning / Pre-launch</option>
+                <option value="single_site">Single site — operating</option>
+                <option value="multi_site">Multi-site operator (2–5 locations)</option>
+                <option value="group">Group / Chain (6+ locations)</option>
+                <option value="investor">Investor / Acquirer</option>
+                <option value="distressed">Distressed / Turnaround needed</option>
+                <option value="exit">Preparing to sell</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="service">Area of Interest</label>
+              <select id="service" name="service">
+                <option value="">Select a practice area...</option>
+                <option value="feasibility">Restaurant Setup &amp; Feasibility</option>
+                <option value="menu">Menu Engineering &amp; Food Cost</option>
+                <option value="performance">Business Performance Review</option>
+                <option value="pricing">Pricing Strategy</option>
+                <option value="labour">Labour &amp; Scheduling</option>
+                <option value="operations">Operations Audit &amp; Systems</option>
+                <option value="expansion">Multi-Site Expansion</option>
+                <option value="turnaround">Turnaround &amp; Recovery</option>
+                <option value="sale">Sale Preparation &amp; Valuation</option>
+                <option value="retainer">Retained Advisory (Monthly)</option>
+                <option value="technology">Technology Platforms (Restaurant-IQ / Flivio)</option>
+                <option value="unsure">Not sure — I need a conversation</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="message">Tell us about your situation</label>
+              <textarea id="message" name="message" placeholder="Briefly describe your business, your current challenge, and what a good outcome looks like for you..."></textarea>
+            </div>
+
+            <button type="submit" class="form-submit">Send Enquiry — We Respond Within 1 Working Day</button>
+            <p class="form-privacy">Your information is never shared with third parties. This enquiry goes directly to Godfred Frimpong.</p>
+          </form>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="nav-logo" style="display:inline-flex; margin-bottom: 4px;">
+            <div class="nav-logo-icon">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <div style="margin-left: 10px;">
+              <div class="nav-logo-text" style="color: white; font-size: 1rem;">The Food Economist</div>
+              <span class="nav-logo-sub">Advisory Division</span>
+            </div>
+          </div>
+          <p>Specialist food business economics advisory for restaurant operators, food service groups, and hospitality investors who are serious about sustainable, profitable growth.</p>
+          <p style="margin-top: 8px; font-size: 0.78rem; color: rgba(255,255,255,0.4);">Part of The Food Economist Group</p>
+        </div>
+
+        <div class="footer-col">
+          <h4>Practice Areas</h4>
+          <ul>
+            <li><a href="#practice-areas">Strategic Economics</a></li>
+            <li><a href="#practice-areas">Operational Economics</a></li>
+            <li><a href="#practice-areas">Financial Economics</a></li>
+            <li><a href="#practice-areas">Retained Advisory</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h4>Technology</h4>
+          <ul>
+            <li><a href="https://restaurantiq.thefoodeconomist.co.uk">Restaurant-IQ</a></li>
+            <li><a href="https://flivio.thefoodeconomist.co.uk">Flivio</a></li>
+          </ul>
+          <h4 style="margin-top: 20px;">Group</h4>
+          <ul>
+            <li><a href="https://thefoodeconomist.co.uk">EPR &amp; Packaging Advisory</a></li>
+            <li><a href="https://thefoodeconomist.co.uk/insights">Insights Hub</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h4>Contact</h4>
+          <ul>
+            <li><a href="mailto:godfred@thefoodeconomist.co.uk">godfred@thefoodeconomist.co.uk</a></li>
+            <li><a href="tel:+447459866535">+44 7459 866 535</a></li>
+            <li><a href="https://wa.me/447459866535">WhatsApp →</a></li>
+          </ul>
+          <div style="margin-top: 16px; font-size: 0.8rem; color: rgba(255,255,255,0.45); line-height: 1.6;">
+            61 Bridge Street<br />Kington, HR5 3DJ<br />United Kingdom
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <p>&copy; 2026 The Food Economist Advisory. All rights reserved.</p>
+        <p>
+          <a href="#">Privacy Policy</a> &nbsp;·&nbsp;
+          <a href="#">Terms of Engagement</a> &nbsp;·&nbsp;
+          <a href="https://thefoodeconomist.co.uk">thefoodeconomist.co.uk</a>
+        </p>
+      </div>
+
+      <div class="footer-disclaimer">
+        <strong style="color: rgba(255,255,255,0.5);">Professional Note:</strong> The Food Economist Advisory provides food business economics consultancy, operational analysis, and financial modelling services within the food and hospitality sector. Advisory services are delivered by Godfred Frimpong FCCA MSc in his capacity as a Food Economist and Trade Economist. Services do not constitute statutory audit, external audit, or public practice accounting services. For regulated financial advice, clients are directed to appropriately authorised practitioners.
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
