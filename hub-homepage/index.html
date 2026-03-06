@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Food Economist | Food Business Advisory & Compliance</title>
+  <title>The Food Economist | Food Business Advisory &amp; Compliance</title>
   <meta name="description" content="The Food Economist — specialist advisory for restaurant operators and food manufacturers. Restaurant economics, margin optimisation, EPR packaging compliance, and food business strategy." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,700;0,800;1,700&display=swap" rel="stylesheet" />
@@ -12,18 +12,16 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --navy:       #1B2766;
-      --navy-dark:  #131d52;
-      --navy-light: #253494;
-      --gold:       #C9971A;
-      --gold-light: #E8B429;
-      --gold-pale:  #FDF5E0;
-      --bg:         #F7F8FA;
-      --white:      #FFFFFF;
-      --text-dark:  #1A1A2E;
-      --text-body:  #3D3D50;
-      --text-muted: #6B7280;
-      --border:     #E2E5EC;
+      --navy:      #1B2766;
+      --navy-dark: #131d52;
+      --gold:      #C9971A;
+      --gold-light:#E8B429;
+      --bg:        #F7F8FA;
+      --white:     #FFFFFF;
+      --text-dark: #1A1A2E;
+      --text-body: #3D3D50;
+      --text-muted:#6B7280;
+      --border:    #E2E5EC;
     }
 
     html { scroll-behavior: smooth; }
@@ -42,91 +40,48 @@
     h1, h2, h3 { font-family: 'Playfair Display', serif; color: var(--text-dark); line-height: 1.2; }
     a { color: var(--gold); text-decoration: none; }
 
-    /* ─── HEADER ─── */
+    /* ── HEADER ── */
     header {
       background: var(--navy-dark);
-      padding: 0 2rem;
-      position: sticky;
-      top: 0;
-      z-index: 100;
       border-bottom: 3px solid var(--gold);
+      padding: 0 2rem;
     }
-
     .header-inner {
-      max-width: 1200px;
+      max-width: 1100px;
       margin: 0 auto;
+      height: 68px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 72px;
-      gap: 1.5rem;
     }
-
-    .brand {
-      display: flex;
-      flex-direction: column;
-      line-height: 1.15;
-    }
-
     .brand-name {
       font-family: 'Playfair Display', serif;
-      font-size: 1.25rem;
+      font-size: 1.3rem;
       font-weight: 800;
       color: var(--white);
-      letter-spacing: 0.01em;
     }
-
-    .brand-name span {
-      color: var(--gold);
-    }
-
-    .brand-tag {
+    .brand-name span { color: var(--gold); }
+    .brand-strapline {
       font-size: 0.68rem;
-      font-weight: 500;
-      color: rgba(255,255,255,0.55);
-      letter-spacing: 0.12em;
+      color: rgba(255,255,255,0.45);
+      letter-spacing: 0.14em;
       text-transform: uppercase;
+      margin-top: 2px;
     }
-
-    .header-contact {
-      font-size: 0.82rem;
-      color: rgba(255,255,255,0.7);
-      text-align: right;
-      line-height: 1.4;
-    }
-
-    .header-contact a {
+    .header-email {
+      font-size: 0.85rem;
       color: var(--gold-light);
       font-weight: 600;
     }
 
-    /* ─── HERO ─── */
+    /* ── HERO ── */
     .hero {
-      background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 50%, var(--navy-light) 100%);
-      padding: 5rem 2rem 4rem;
+      background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 100%);
+      padding: 5rem 2rem 4.5rem;
       text-align: center;
-      position: relative;
-      overflow: hidden;
     }
-
-    .hero::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background:
-        radial-gradient(ellipse 70% 60% at 20% 80%, rgba(201,151,26,0.08) 0%, transparent 60%),
-        radial-gradient(ellipse 50% 40% at 80% 20%, rgba(201,151,26,0.06) 0%, transparent 60%);
-      pointer-events: none;
-    }
-
-    .hero-inner {
-      max-width: 780px;
-      margin: 0 auto;
-      position: relative;
-      z-index: 1;
-    }
-
-    .hero-eyebrow {
+    .hero-inner { max-width: 700px; margin: 0 auto; }
+    .hero-label {
       display: inline-block;
       font-size: 0.72rem;
       font-weight: 700;
@@ -139,551 +94,338 @@
       border-radius: 2rem;
       margin-bottom: 1.75rem;
     }
-
     .hero h1 {
       font-size: clamp(2.2rem, 5vw, 3.6rem);
       font-weight: 800;
       color: var(--white);
-      margin-bottom: 0.5rem;
+      margin-bottom: 1.25rem;
     }
-
     .hero h1 .gold { color: var(--gold); }
-
-    .hero-sub {
-      font-size: clamp(1rem, 2vw, 1.2rem);
+    .hero p {
+      font-size: clamp(1rem, 2vw, 1.15rem);
       color: rgba(255,255,255,0.75);
-      max-width: 580px;
-      margin: 1rem auto 0.5rem;
-      font-weight: 400;
+      max-width: 560px;
+      margin: 0 auto;
     }
-
-    .hero-name {
-      font-size: 0.88rem;
-      font-weight: 600;
-      color: rgba(255,255,255,0.5);
-      margin-top: 1.25rem;
-      letter-spacing: 0.06em;
-    }
-
-    .hero-divider {
-      width: 56px;
-      height: 3px;
+    .hero-line {
+      width: 56px; height: 3px;
       background: linear-gradient(90deg, var(--gold), var(--gold-light));
       border-radius: 2px;
-      margin: 1.75rem auto 0;
+      margin: 2rem auto 0;
     }
 
-    /* ─── ROUTE SECTION ─── */
-    .route-section {
+    /* ── CHOOSE SECTION ── */
+    .choose {
       padding: 4.5rem 2rem 5rem;
       background: var(--bg);
     }
-
-    .route-section .section-label {
+    .choose-head {
       text-align: center;
+      margin-bottom: 3rem;
+    }
+    .choose-head p {
       font-size: 0.72rem;
       font-weight: 700;
       letter-spacing: 0.18em;
       text-transform: uppercase;
       color: var(--gold);
-      margin-bottom: 0.75rem;
+      margin-bottom: 0.6rem;
     }
-
-    .route-section h2 {
-      text-align: center;
+    .choose-head h2 {
       font-size: clamp(1.5rem, 3vw, 2rem);
       color: var(--navy);
-      margin-bottom: 0.75rem;
     }
 
-    .route-section .route-intro {
-      text-align: center;
-      color: var(--text-muted);
-      max-width: 520px;
-      margin: 0 auto 3rem;
-      font-size: 0.97rem;
-    }
-
-    .route-cards {
+    .cards {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 2rem;
-      max-width: 960px;
+      max-width: 920px;
       margin: 0 auto;
     }
 
-    .route-card {
+    .card {
       background: var(--white);
-      border-radius: 16px;
       border: 1.5px solid var(--border);
-      padding: 2.5rem 2rem 2rem;
+      border-radius: 16px;
+      padding: 2.25rem 2rem 2rem;
       display: flex;
       flex-direction: column;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
       box-shadow: 0 2px 16px rgba(27,39,102,0.06);
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     }
-
-    .route-card:hover {
+    .card:hover {
       transform: translateY(-4px);
-      box-shadow: 0 12px 40px rgba(27,39,102,0.14);
+      box-shadow: 0 12px 40px rgba(27,39,102,0.13);
       border-color: var(--gold);
     }
 
-    .route-card.primary {
-      border-color: rgba(201,151,26,0.3);
-      background: linear-gradient(160deg, #fffdf5 0%, var(--white) 100%);
-    }
-
     .card-icon {
-      width: 56px;
-      height: 56px;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.6rem;
-      margin-bottom: 1.5rem;
+      font-size: 2rem;
+      margin-bottom: 1.25rem;
     }
-
-    .card-icon.restaurant {
-      background: linear-gradient(135deg, #fff5e0, #fde9b0);
-    }
-
-    .card-icon.compliance {
-      background: linear-gradient(135deg, #e8ecf8, #d0d8f0);
-    }
-
-    .route-card h3 {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: var(--navy);
-      margin-bottom: 0.5rem;
-    }
-
-    .card-audience {
-      font-size: 0.75rem;
+    .card-for {
+      font-size: 0.72rem;
       font-weight: 700;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--gold);
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
     }
-
-    .route-card p {
-      font-size: 0.93rem;
-      color: var(--text-body);
+    .card h3 {
+      font-size: 1.25rem;
+      color: var(--navy);
+      margin-bottom: 0.85rem;
+    }
+    .card > p {
+      font-size: 0.92rem;
       line-height: 1.7;
+      color: var(--text-body);
       margin-bottom: 1.5rem;
       flex: 1;
     }
-
-    .card-services {
+    .card ul {
       list-style: none;
       margin-bottom: 2rem;
     }
-
-    .card-services li {
+    .card ul li {
       font-size: 0.85rem;
-      color: var(--text-body);
       padding: 0.35rem 0;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 0.6rem;
+      color: var(--text-body);
     }
-
-    .card-services li:last-child { border-bottom: none; }
-
-    .card-services li::before {
+    .card ul li:last-child { border-bottom: none; }
+    .card ul li::before {
       content: '✓';
       color: var(--gold);
       font-weight: 700;
       font-size: 0.8rem;
-      flex-shrink: 0;
     }
 
-    .card-cta {
+    .btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 0.5rem;
       padding: 0.85rem 1.75rem;
       border-radius: 8px;
       font-weight: 700;
       font-size: 0.9rem;
-      transition: all 0.18s ease;
-      text-align: center;
-      justify-content: center;
+      transition: all 0.18s;
     }
-
-    .cta-primary {
+    .btn-gold {
       background: linear-gradient(135deg, var(--gold), var(--gold-light));
       color: var(--navy-dark);
     }
-
-    .cta-primary:hover {
-      background: linear-gradient(135deg, var(--gold-light), var(--gold));
+    .btn-gold:hover {
       color: var(--navy-dark);
       box-shadow: 0 4px 20px rgba(201,151,26,0.4);
       transform: translateY(-1px);
     }
-
-    .cta-secondary {
+    .btn-navy {
       background: var(--navy);
       color: var(--white);
     }
-
-    .cta-secondary:hover {
-      background: var(--navy-light);
+    .btn-navy:hover {
+      background: #253494;
       color: var(--white);
       box-shadow: 0 4px 20px rgba(27,39,102,0.3);
       transform: translateY(-1px);
     }
 
-    /* ─── ABOUT STRIP ─── */
-    .about-strip {
+    /* ── ABOUT ── */
+    .about {
       background: var(--navy-dark);
-      padding: 3.5rem 2rem;
+      padding: 4rem 2rem;
     }
-
     .about-inner {
-      max-width: 860px;
+      max-width: 760px;
       margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr 2fr;
-      gap: 3rem;
-      align-items: center;
-    }
-
-    .about-credentials {
       text-align: center;
     }
-
-    .credentials-avatar {
-      width: 96px;
-      height: 96px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, var(--gold), var(--gold-light));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: 'Playfair Display', serif;
-      font-size: 2rem;
-      font-weight: 800;
-      color: var(--navy-dark);
-      margin: 0 auto 1rem;
-    }
-
-    .credentials-name {
-      font-family: 'Playfair Display', serif;
-      font-size: 1.15rem;
-      font-weight: 700;
+    .about-inner h2 {
+      font-size: clamp(1.4rem, 3vw, 1.9rem);
       color: var(--white);
-      margin-bottom: 0.25rem;
+      margin-bottom: 1.25rem;
     }
-
-    .credentials-title {
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: var(--gold);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+    .about-inner p {
+      font-size: 0.95rem;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.8;
+      margin-bottom: 1rem;
+      max-width: 680px;
+      margin-left: auto;
+      margin-right: auto;
     }
+    .about-inner p:last-of-type { margin-bottom: 0; }
 
-    .about-text h3 {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: var(--white);
-      margin-bottom: 0.75rem;
-    }
-
-    .about-text p {
-      font-size: 0.92rem;
-      color: rgba(255,255,255,0.72);
-      line-height: 1.75;
-      margin-bottom: 0.75rem;
-    }
-
-    .about-text p:last-child { margin-bottom: 0; }
-
-    .credential-badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      margin-top: 1.25rem;
-    }
-
-    .badge {
-      font-size: 0.72rem;
-      font-weight: 600;
-      color: var(--gold-light);
-      background: rgba(201,151,26,0.15);
-      border: 1px solid rgba(201,151,26,0.3);
-      padding: 0.3rem 0.75rem;
-      border-radius: 2rem;
-      letter-spacing: 0.05em;
-    }
-
-    /* ─── CONTACT BAR ─── */
-    .contact-bar {
+    /* ── CONTACT ── */
+    .contact {
       background: var(--white);
       border-top: 1px solid var(--border);
-      padding: 2rem 2rem;
+      padding: 2.25rem 2rem;
     }
-
-    .contact-bar-inner {
-      max-width: 960px;
+    .contact-inner {
+      max-width: 920px;
       margin: 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 2rem;
       flex-wrap: wrap;
+      gap: 1.5rem;
     }
-
-    .contact-bar p {
+    .contact-inner p {
       font-size: 1rem;
       font-weight: 600;
       color: var(--text-dark);
       margin: 0;
     }
-
-    .contact-bar p span {
-      color: var(--text-muted);
+    .contact-inner p span {
       font-weight: 400;
+      color: var(--text-muted);
       font-size: 0.88rem;
     }
-
-    .contact-links {
-      display: flex;
-      gap: 1.5rem;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .contact-link {
+    .contact-email {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      font-size: 0.9rem;
+      gap: 0.6rem;
       font-weight: 600;
       color: var(--navy);
+      font-size: 0.92rem;
       transition: color 0.15s;
     }
+    .contact-email:hover { color: var(--gold); }
 
-    .contact-link:hover { color: var(--gold); }
-
-    .contact-link .icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: var(--bg);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-    }
-
-    /* ─── FOOTER ─── */
+    /* ── FOOTER ── */
     footer {
       background: #0d1438;
-      padding: 1.75rem 2rem;
+      padding: 1.5rem 2rem;
       text-align: center;
       margin-top: auto;
     }
-
     footer p {
       font-size: 0.78rem;
-      color: rgba(255,255,255,0.35);
+      color: rgba(255,255,255,0.3);
       margin: 0;
     }
-
-    footer a {
-      color: rgba(255,255,255,0.45);
-    }
-
+    footer a { color: rgba(255,255,255,0.4); }
     footer a:hover { color: var(--gold); }
 
-    /* ─── RESPONSIVE ─── */
-    @media (max-width: 700px) {
-      .route-cards {
-        grid-template-columns: 1fr;
-      }
-
-      .about-inner {
-        grid-template-columns: 1fr;
-        gap: 2rem;
-        text-align: center;
-      }
-
-      .credential-badges {
-        justify-content: center;
-      }
-
-      .contact-bar-inner {
-        flex-direction: column;
-        text-align: center;
-      }
-
-      .contact-links {
-        justify-content: center;
-      }
-
-      .header-contact {
-        display: none;
-      }
+    /* ── RESPONSIVE ── */
+    @media (max-width: 660px) {
+      .cards { grid-template-columns: 1fr; }
+      .contact-inner { flex-direction: column; text-align: center; }
+      .header-email { display: none; }
     }
   </style>
 </head>
 <body>
 
-  <!-- ─── HEADER ─── -->
   <header>
     <div class="header-inner">
-      <div class="brand">
-        <span class="brand-name">The <span>Food Economist</span></span>
-        <span class="brand-tag">Advisory &amp; Compliance</span>
+      <div>
+        <div class="brand-name">The <span>Food Economist</span></div>
+        <div class="brand-strapline">Advisory &amp; Compliance</div>
       </div>
-      <div class="header-contact">
-        <div>Godfred Frempong-Atuah</div>
-        <a href="mailto:godfred@thefoodeconomist.co.uk">godfred@thefoodeconomist.co.uk</a>
-      </div>
+      <a href="mailto:godfred@thefoodeconomist.co.uk" class="header-email">
+        godfred@thefoodeconomist.co.uk
+      </a>
     </div>
   </header>
 
-  <!-- ─── HERO ─── -->
   <section class="hero">
     <div class="hero-inner">
-      <div class="hero-eyebrow">Specialist Food Business Advisory</div>
+      <div class="hero-label">Specialist Food Business Services</div>
       <h1>The <span class="gold">Food Economist</span></h1>
-      <p class="hero-sub">
-        Helping food businesses grow profitably — from restaurant operators managing margins
-        to brand owners navigating packaging compliance.
+      <p>
+        Expert advisory for food businesses — whether you run a restaurant
+        or produce packaged food and drink.
       </p>
-      <p class="hero-name">Godfred Frempong-Atuah &nbsp;|&nbsp; Food Economist &amp; Business Strategist</p>
-      <div class="hero-divider"></div>
+      <div class="hero-line"></div>
     </div>
   </section>
 
-  <!-- ─── AUDIENCE ROUTING ─── -->
-  <section class="route-section">
-    <p class="section-label">How can I help you?</p>
-    <h2>Choose your area</h2>
-    <p class="route-intro">
-      Two distinct practice areas — both rooted in food economics,
-      both focused on tangible commercial outcomes.
-    </p>
+  <section class="choose">
+    <div class="choose-head">
+      <p>Who are you?</p>
+      <h2>Select your area of interest</h2>
+    </div>
 
-    <div class="route-cards">
+    <div class="cards">
 
-      <!-- CARD 1: RESTAURANT / FOOD SERVICE -->
-      <div class="route-card primary">
-        <div class="card-icon restaurant">🍽️</div>
-        <p class="card-audience">For Restaurant &amp; Food Service Operators</p>
+      <div class="card">
+        <div class="card-icon">🍽️</div>
+        <div class="card-for">For Restaurants &amp; Food Service</div>
         <h3>Restaurant &amp; Food Service Advisory</h3>
         <p>
-          You're in hospitality and food service. Margins are under pressure,
-          costs keep climbing, and you need practical strategic advice —
-          not generic business consultancy.
+          Practical advisory for restaurant owners, caterers, and food service operators.
+          Focused on improving profitability and sustainable growth.
         </p>
-        <ul class="card-services">
+        <ul>
           <li>Menu engineering &amp; gross profit optimisation</li>
           <li>Food cost analysis &amp; waste reduction</li>
           <li>Supplier renegotiation strategy</li>
-          <li>Pricing model restructuring</li>
-          <li>Multi-site &amp; growth advisory</li>
-          <li>Financial performance diagnosis</li>
+          <li>Pricing restructuring</li>
+          <li>Multi-site growth advisory</li>
+          <li>Financial performance review</li>
         </ul>
-        <a href="/advisory/" class="card-cta cta-primary">
-          Explore Advisory Services →
-        </a>
+        <a href="/advisory/" class="btn btn-gold">Explore Advisory Services →</a>
       </div>
 
-      <!-- CARD 2: BRAND OWNERS / MANUFACTURERS -->
-      <div class="route-card">
-        <div class="card-icon compliance">📦</div>
-        <p class="card-audience">For Brand Owners &amp; Food Manufacturers</p>
+      <div class="card">
+        <div class="card-icon">📦</div>
+        <div class="card-for">For Food &amp; Drink Brands</div>
         <h3>EPR &amp; Packaging Compliance</h3>
         <p>
-          You produce or sell packaged food or drink. Extended Producer
-          Responsibility (EPR) regulations mean new reporting obligations —
-          and penalties for non-compliance. We help you meet them.
+          Guidance for food and drink producers on Extended Producer Responsibility
+          and packaging regulations — avoiding penalties and staying compliant.
         </p>
-        <ul class="card-services">
+        <ul>
           <li>EPR scheme registration &amp; guidance</li>
-          <li>Packaging data collection &amp; reporting</li>
+          <li>Packaging data reporting</li>
           <li>Compliance audits &amp; gap analysis</li>
           <li>Producer obligation calculations</li>
-          <li>Regulation monitoring &amp; alerts</li>
           <li>Plastic packaging tax advisory</li>
+          <li>Regulation monitoring</li>
         </ul>
-        <a href="/faqs.html" class="card-cta cta-secondary">
-          Explore Compliance Services →
-        </a>
+        <a href="/faqs.html" class="btn btn-navy">Explore Compliance Services →</a>
       </div>
 
     </div>
   </section>
 
-  <!-- ─── ABOUT STRIP ─── -->
-  <section class="about-strip">
+  <section class="about">
     <div class="about-inner">
-      <div class="about-credentials">
-        <div class="credentials-avatar">GF</div>
-        <div class="credentials-name">Godfred Frempong-Atuah</div>
-        <div class="credentials-title">Food Economist</div>
-        <div class="credential-badges" style="justify-content:center; margin-top:1rem;">
-          <span class="badge">30+ Years in Food</span>
-          <span class="badge">MSc Food Economics</span>
-          <span class="badge">UK &amp; International</span>
-        </div>
-      </div>
-      <div class="about-text">
-        <h3>Why The Food Economist?</h3>
-        <p>
-          Most business advisors understand business. Very few understand the food industry
-          in depth — the margins, the seasonality, the supply chain dynamics, the regulatory
-          environment, and the operational realities of running a kitchen or a food brand.
-        </p>
-        <p>
-          With over 30 years working across restaurants, food manufacturing, retail, and
-          policy, I bring a rare combination: academic rigour in food economics, hands-on
-          industry experience, and practical commercial advisory skills.
-        </p>
-        <p>
-          Whether you run a single restaurant or manage a portfolio of food brands,
-          you get focused, specialist advice — not a generalist with a checklist.
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── CONTACT BAR ─── -->
-  <section class="contact-bar">
-    <div class="contact-bar-inner">
+      <h2>About The Food Economist</h2>
       <p>
-        Ready to talk?
-        <span> — Initial consultations available by appointment.</span>
+        The Food Economist provides specialist advisory services across the food sector —
+        from restaurants and hospitality to food manufacturing and branded goods.
       </p>
-      <div class="contact-links">
-        <a href="mailto:godfred@thefoodeconomist.co.uk" class="contact-link">
-          <span class="icon">✉️</span>
-          godfred@thefoodeconomist.co.uk
-        </a>
-        <a href="https://www.thefoodeconomist.co.uk" class="contact-link">
-          <span class="icon">🌐</span>
-          thefoodeconomist.co.uk
-        </a>
-      </div>
+      <p>
+        Our work is grounded in food economics and backed by over 30 years of practical
+        experience across UK and international food markets. We combine academic rigour
+        with hands-on commercial insight to help food businesses make better decisions.
+      </p>
     </div>
   </section>
 
-  <!-- ─── FOOTER ─── -->
+  <section class="contact">
+    <div class="contact-inner">
+      <p>Get in touch <span>— initial consultations available by appointment</span></p>
+      <a href="mailto:godfred@thefoodeconomist.co.uk" class="contact-email">
+        ✉️ &nbsp;godfred@thefoodeconomist.co.uk
+      </a>
+    </div>
+  </section>
+
   <footer>
     <p>
       &copy; 2025 The Food Economist &nbsp;|&nbsp;
       <a href="/privacy.html">Privacy Policy</a> &nbsp;|&nbsp;
-      <a href="/terms.html">Terms</a> &nbsp;|&nbsp;
-      Registered in England &amp; Wales
+      <a href="/terms.html">Terms</a>
     </p>
   </footer>
 
