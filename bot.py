@@ -33,6 +33,7 @@ import os
 import re
 import json
 import logging
+import subprocess
 from datetime import datetime, timedelta, date
 
 from telegram import Update
@@ -2526,6 +2527,55 @@ async def _invoice_reminder_job(context: ContextTypes.DEFAULT_TYPE):
                 logger.warning("Could not send invoice reminder to %s: %s", chat_id, e)
 
 
+# ── Version / deployment info ─────────────────────────────────────────────────
+
+def _git_version_info() -> dict:
+    """Return git commit info. Fails gracefully if git is unavailable."""
+    def _run(args):
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL).decode().strip()
+    try:
+        commit_hash  = _run(["git", "rev-parse", "--short", "HEAD"])
+        commit_date  = _run(["git", "log", "-1", "--format=%ci"])          # e.g. 2026-03-06 22:40:00 +0000
+        commit_msg   = _run(["git", "log", "-1", "--format=%s"])           # subject of latest commit
+        recent_log   = _run(["git", "log", "--oneline", "-5"])             # last 5 commits
+        return {"hash": commit_hash, "date": commit_date, "msg": commit_msg, "log": recent_log}
+    except Exception:
+        return {"hash": "unknown", "date": "unknown", "msg": "unknown", "log": "Not available"}
+
+
+async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /version — show when this bot was last deployed and what changed.
+    """
+    info = _git_version_info()
+
+    # Format the deploy date nicely if possible
+    deploy_date = info["date"]
+    try:
+        dt = datetime.fromisoformat(info["date"])
+        deploy_date = dt.strftime("%d %b %Y at %H:%M UTC")
+    except Exception:
+        pass
+
+    # Build the recent-changes block
+    lines = []
+    for line in info["log"].splitlines():
+        # strip the commit hash prefix (7 chars + space) for readability
+        parts = line.split(" ", 1)
+        msg = parts[1] if len(parts) == 2 else line
+        lines.append(f"  • {msg}")
+    recent = "\n".join(lines) if lines else "  • No history available"
+
+    text = (
+        f"*Restaurant-IQ — Deployment Info*\n\n"
+        f"*Last deployed:* {deploy_date}\n"
+        f"*Commit:* `{info['hash']}`\n"
+        f"*Latest change:* {info['msg']}\n\n"
+        f"*Recent updates:*\n{recent}"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 # ── Demo commands ─────────────────────────────────────────────────────────────
 
 DEMO_RESTAURANT_NAME = "The Golden Fork"
@@ -2707,6 +2757,7 @@ def main():
     app.add_handler(CommandHandler("financials", cmd_financials))
     app.add_handler(CommandHandler("outstanding", cmd_outstanding))
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
+    app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
     app.add_handler(CommandHandler("features", cmd_features))
