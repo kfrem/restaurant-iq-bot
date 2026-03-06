@@ -21,8 +21,32 @@ and logs a warning so you know which key to add.
 import json
 import base64
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+
+def _with_retry(fn, *args, retries=3, wait=25):
+    """
+    Call fn(*args). If a 429 rate-limit error is returned by the API,
+    wait `wait` seconds and retry up to `retries` times before giving up.
+    All other exceptions are raised immediately.
+    """
+    for attempt in range(retries):
+        try:
+            return fn(*args)
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "quota" in err.lower() or "rate_limit" in err.lower():
+                if attempt < retries - 1:
+                    logger.warning(
+                        "Rate limit hit (attempt %d/%d). Waiting %ds...",
+                        attempt + 1, retries, wait,
+                    )
+                    time.sleep(wait)
+                    continue
+            raise
+    raise RuntimeError("Max retries exceeded after rate limit")
 
 # ============================================================
 # TIER DEFINITIONS
@@ -243,11 +267,14 @@ def _gemini_text(prompt: str) -> str:
     from config import GEMINI_API_KEY, GEMINI_MODEL
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=400),
-    )
-    return response.text
+
+    def _call():
+        return model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=400),
+        ).text
+
+    return _with_retry(_call)
 
 
 def _gemini_vision(prompt: str, image_path: str) -> str:
@@ -257,11 +284,14 @@ def _gemini_vision(prompt: str, image_path: str) -> str:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(GEMINI_MODEL)
     image = Image.open(image_path)
-    response = model.generate_content(
-        [prompt, image],
-        generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=600),
-    )
-    return response.text
+
+    def _call():
+        return model.generate_content(
+            [prompt, image],
+            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=600),
+        ).text
+
+    return _with_retry(_call)
 
 
 def _gemini_report(prompt: str) -> str:
@@ -269,11 +299,14 @@ def _gemini_report(prompt: str) -> str:
     from config import GEMINI_API_KEY, GEMINI_MODEL
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=2500),
-    )
-    return response.text
+
+    def _call():
+        return model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=2500),
+        ).text
+
+    return _with_retry(_call)
 
 
 # ============================================================
@@ -476,12 +509,22 @@ def generate_report(entries_data: list, restaurant_name: str,
             return _REPORT_FN[provider](prompt).strip()
     except Exception as e:
         logger.error("generate_report error (%s): %s", provider, e)
+        err = str(e)
+        if "429" in err or "quota" in err.lower() or "rate_limit" in err.lower():
+            user_msg = (
+                "The AI is temporarily busy (rate limit reached). "
+                "Please wait 30 seconds and try /report again."
+            )
+        else:
+            user_msg = (
+                "Could not generate the AI report. "
+                "Check your API key is valid, then try /report again."
+            )
         return (
             f"## Weekly Briefing — {restaurant_name}\n\n"
-            f"Could not generate AI report (error: {e}).\n\n"
+            f"{user_msg}\n\n"
             f"Entries captured this week: {len(entries_data)}.\n"
-            f"Current AI tier: {tier['label']}.\n"
-            "Check your API key is valid and has not exceeded its rate limit."
+            f"Current AI tier: {tier['label']}."
         )
 
 
