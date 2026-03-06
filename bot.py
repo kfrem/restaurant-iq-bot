@@ -47,6 +47,7 @@ from database import (
     save_invoice,
     get_week_entries,
     get_entries_for_period,
+    get_entries_with_staff,
     get_outstanding_invoices,
     get_invoices_due_soon,
     mark_invoice_paid,
@@ -289,6 +290,55 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Restaurants registered: {tier['count']}\n"
         f"{next_info}\n\n"
         f"Keep the data coming — voice notes, photos and texts all count!"
+    )
+
+
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /today — list every entry logged today with who sent it, what time, and what was captured.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    today_str = date.today().isoformat()
+    entries = get_entries_with_staff(restaurant["id"], today_str, today_str)
+
+    if not entries:
+        await update.message.reply_text(
+            "No entries logged today yet.\n"
+            "Send a voice note, photo or text to start capturing."
+        )
+        return
+
+    TYPE_ICON = {"voice": "🎙", "photo": "📷", "text": "💬"}
+    lines = []
+    for e in entries:
+        icon = TYPE_ICON.get(e["entry_type"], "📝")
+        name = e["staff_name"] or "Unknown"
+        time_str = e["entry_time"][:5] if e["entry_time"] else ""
+        category = e["category"] or "general"
+
+        # Get the AI summary if available, otherwise truncate raw text
+        summary = ""
+        if e["structured_data"]:
+            try:
+                a = json.loads(e["structured_data"])
+                summary = a.get("summary", "")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if not summary:
+            summary = (e["raw_text"] or "")[:80]
+
+        lines.append(f"{icon} {time_str}  {name}  [{category}]\n   {summary}")
+
+    body = "\n\n".join(lines)
+    await update.message.reply_text(
+        f"Today's entries — {restaurant['name']}\n"
+        f"{date.today().strftime('%A %d %B')}\n"
+        f"{'─' * 36}\n\n"
+        f"{body}\n\n"
+        f"Total: {len(entries)} entries from {len({e['staff_name'] for e in entries})} team member(s)"
     )
 
 
@@ -890,9 +940,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         analysis.get("category", "general"),
     )
 
+    urgency = analysis.get("urgency", "low")
+    icon = URGENCY_ICONS.get(urgency, "⚪")
     summary = analysis.get("summary", text[:80])
     await update.message.reply_text(
-        f"Noted ({analysis.get('category', 'general')}): {summary}"
+        f"Captured ({update.effective_user.first_name}):\n"
+        f'"{text[:200]}"\n\n'
+        f"Category: {analysis.get('category', 'general')}\n"
+        f"Summary: {summary}\n"
+        f"Urgency: {icon} {urgency}"
     )
 
 
@@ -1105,6 +1161,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
     app.add_handler(CommandHandler("recall", cmd_recall))
     app.add_handler(CommandHandler("financials", cmd_financials))

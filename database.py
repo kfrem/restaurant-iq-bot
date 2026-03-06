@@ -202,6 +202,21 @@ def get_entries_for_period(restaurant_id: int, start_date: str, end_date: str):
         return c.fetchall()
 
 
+def get_entries_with_staff(restaurant_id: int, start_date: str, end_date: str):
+    """Like get_entries_for_period but includes staff name and role via JOIN."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT daily_entries.*, staff.name as staff_name, staff.role as staff_role
+               FROM daily_entries
+               LEFT JOIN staff ON daily_entries.staff_id = staff.id
+               WHERE daily_entries.restaurant_id = ? AND entry_date BETWEEN ? AND ?
+               ORDER BY entry_date, entry_time""",
+            (restaurant_id, start_date, end_date),
+        )
+        return c.fetchall()
+
+
 def get_week_entries(restaurant_id: int):
     now = datetime.now()
     start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
