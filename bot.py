@@ -40,6 +40,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
+    ConversationHandler,
     MessageHandler,
     ContextTypes,
     filters,
@@ -79,6 +80,7 @@ from database import (
     resolve_support_ticket,
     get_all_open_tickets,
     update_restaurant_name,
+    update_restaurant_profile,
     # New features
     save_labour_entry,
     get_labour_for_period,
@@ -343,56 +345,268 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text(
-            "Usage: /register YourRestaurantName\n"
-            "Example: /register Joe's Bistro\n\n"
-            "To change an existing name: /rename NewName\n"
-            "To start completely fresh: /cleardata then /register NewName"
-        )
-        return
+# ── Registration conversation states ──────────────────────────────────────────
+REG_NAME, REG_LOCATION, REG_CONTACT, REG_LEGAL, REG_BUSINESS = range(5)
 
-    name = " ".join(context.args)
+_SKIP_HINT = "Reply with the details, or type *skip* to move on."
+_DONE_WORDS = {"skip", "done", "next", "no", "n", "/skip", "/done"}
+
+
+def _is_skip(text: str) -> bool:
+    return text.strip().lower() in _DONE_WORDS
+
+
+async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for /register — starts the onboarding wizard."""
     chat_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
-
     existing = get_restaurant_by_group(chat_id)
 
+    # Already registered — offer to update profile or just rename
     if existing:
-        if existing["name"] == name:
+        name_given = " ".join(context.args) if context.args else ""
+        if name_given and name_given != existing["name"]:
+            update_restaurant_name(chat_id, name_given)
+            register_staff(existing["id"], user_id, update.effective_user.first_name or "Owner", "owner")
             await update.message.reply_text(
-                f"Already registered as '{name}'. No changes made.\n\n"
-                f"Use /status to see your current data.\n"
-                f"Use /rename NewName to change the name."
+                f"Name updated to: *{name_given}*\n\n"
+                f"All existing data is preserved.\n"
+                f"Use /status to check your data.",
+                parse_mode="Markdown",
             )
-            return
+        else:
+            await update.message.reply_text(
+                f"*{existing['name']}* is already registered.\n\n"
+                f"Use /rename to change the name.\n"
+                f"Use /profile to update your company details.",
+                parse_mode="Markdown",
+            )
+        return ConversationHandler.END
 
-        # Different name — just rename, keep all data
-        update_restaurant_name(chat_id, name)
-        register_staff(existing["id"], user_id, update.effective_user.first_name or "Owner", "owner")
+    # New registration — if name was given inline, skip straight to profile
+    if context.args:
+        name = " ".join(context.args)
+        _do_register(name, chat_id, user_id, update.effective_user.first_name)
+        context.user_data["reg_chat_id"] = chat_id
         await update.message.reply_text(
-            f"Restaurant renamed to: {name}\n\n"
-            f"All existing entries, invoices and records are preserved.\n"
-            f"Use /status to verify everything looks correct.\n\n"
-            f"If you want to delete all data and start fresh: /cleardata"
+            f"*{name}* is now registered and your bot is live!\n\n"
+            f"Team members can start sending voice notes, photos and texts right away.\n\n"
+            f"─────────────────────\n"
+            f"*Optional: Complete your company profile*\n"
+            f"Adding your details means they appear on every report.\n\n"
+            f"*Step 1 of 4 — Location*\n"
+            f"What is your address? Include street, city and postcode.\n\n"
+            f"{_SKIP_HINT}",
+            parse_mode="Markdown",
         )
-        return
+        return REG_LOCATION
 
-    # Fresh registration
+    # No name given — ask for it
+    await update.message.reply_text(
+        "*Welcome to Restaurant-IQ!*\n\n"
+        "Let's get you set up. This takes about 2 minutes.\n"
+        "You can skip any optional step.\n\n"
+        "*What is your restaurant or business trading name?*",
+        parse_mode="Markdown",
+    )
+    context.user_data["reg_chat_id"] = chat_id
+    context.user_data["reg_user_id"] = user_id
+    return REG_NAME
+
+
+def _do_register(name: str, chat_id: str, user_id: str, first_name: str):
     register_restaurant(name, chat_id, user_id)
     restaurant = get_restaurant_by_group(chat_id)
     if restaurant:
-        register_staff(restaurant["id"], user_id, update.effective_user.first_name or "Owner", "owner")
+        register_staff(restaurant["id"], user_id, first_name or "Owner", "owner")
+
+
+async def _reg_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    if not name or name.startswith("/"):
+        await update.message.reply_text("Please enter a name for your restaurant.")
+        return REG_NAME
+
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    user_id = str(update.effective_user.id)
+    _do_register(name, chat_id, user_id, update.effective_user.first_name)
 
     await update.message.reply_text(
-        f"Registered: {name}\n"
-        f"You are set as the owner.\n\n"
-        f"All team members can now just send messages to this group.\n"
-        f"Voice notes, photos and texts are all captured automatically.\n\n"
-        f"Start by sending a voice note about today's shift.\n"
-        f"Or type /features to see everything the bot can do."
+        f"*{name}* is now registered and your bot is live!\n\n"
+        f"Team members can start sending voice notes, photos and texts right away.\n\n"
+        f"─────────────────────\n"
+        f"*Optional: Complete your company profile*\n"
+        f"Adding details means they appear on every report.\n\n"
+        f"*Step 1 of 4 — Location*\n"
+        f"What is your address? Include street, city and postcode.\n\n"
+        f"{_SKIP_HINT}",
+        parse_mode="Markdown",
     )
+    return REG_LOCATION
+
+
+async def _reg_got_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    text = update.message.text.strip()
+
+    if not _is_skip(text):
+        # Try to parse city and postcode from free text
+        # UK postcode pattern
+        import re as _re
+        postcode_match = _re.search(r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b', text, _re.I)
+        postcode = postcode_match.group(0).upper() if postcode_match else None
+        address = text
+        update_restaurant_profile(chat_id, address=address, postcode=postcode)
+
+    await update.message.reply_text(
+        f"*Step 2 of 4 — Contact Details*\n"
+        f"Phone number and/or email address?\n"
+        f"_(e.g. 020 7123 4567 | hello@yourbistro.com)_\n\n"
+        f"{_SKIP_HINT}",
+        parse_mode="Markdown",
+    )
+    return REG_CONTACT
+
+
+async def _reg_got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    text = update.message.text.strip()
+
+    if not _is_skip(text):
+        import re as _re
+        email_match = _re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', text, _re.I)
+        phone_match = _re.search(r'[\d\s\+\(\)-]{7,}', text)
+        email = email_match.group(0) if email_match else None
+        # Remove email from phone search area
+        phone_text = text.replace(email, "") if email else text
+        phone_match2 = _re.search(r'[\d\s\+\(\)-]{7,}', phone_text)
+        phone = phone_match2.group(0).strip() if phone_match2 else None
+        update_restaurant_profile(chat_id, email=email, phone=phone)
+
+    await update.message.reply_text(
+        f"*Step 3 of 4 — Legal & Tax*\n"
+        f"Company registration number and/or VAT number?\n"
+        f"_(e.g. 12345678 | GB123456789)_\n\n"
+        f"{_SKIP_HINT}",
+        parse_mode="Markdown",
+    )
+    return REG_LEGAL
+
+
+async def _reg_got_legal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    text = update.message.text.strip()
+
+    if not _is_skip(text):
+        import re as _re
+        vat_match = _re.search(r'GB\s*\d{9}|\d{9}', text, _re.I)
+        # Company number is typically 8 digits (UK)
+        co_match = _re.search(r'\b\d{8}\b', text)
+        vat = vat_match.group(0).upper() if vat_match else None
+        company_number = co_match.group(0) if co_match else text if not vat else None
+        update_restaurant_profile(chat_id, vat_number=vat, company_number=company_number)
+
+    await update.message.reply_text(
+        f"*Step 4 of 4 — About the Business*\n"
+        f"Cuisine type, number of covers and number of locations?\n"
+        f"_(e.g. Italian, 60 covers, 3 locations)_\n\n"
+        f"{_SKIP_HINT}",
+        parse_mode="Markdown",
+    )
+    return REG_BUSINESS
+
+
+async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    text = update.message.text.strip()
+
+    if not _is_skip(text):
+        import re as _re
+        covers_match = _re.search(r'(\d+)\s*covers?', text, _re.I)
+        branches_match = _re.search(r'(\d+)\s*(location|branch|site|outlet)s?', text, _re.I)
+        num_covers = int(covers_match.group(1)) if covers_match else None
+        num_branches = int(branches_match.group(1)) if branches_match else None
+        # Cuisine: first word(s) before any number
+        cuisine_match = _re.match(r'^([A-Za-z\s&/-]+?)(?:\s*,|\s*\d|$)', text)
+        cuisine = cuisine_match.group(1).strip() if cuisine_match else None
+        update_restaurant_profile(
+            chat_id,
+            cuisine_type=cuisine,
+            num_covers=num_covers,
+            num_branches=num_branches,
+            profile_complete=1,
+        )
+
+    restaurant = get_restaurant_by_group(chat_id)
+    name = restaurant["name"] if restaurant else "Your restaurant"
+
+    # Build a summary of what was saved
+    lines = []
+    if restaurant:
+        fields = {
+            "Address": restaurant["address"],
+            "Phone": restaurant["phone"],
+            "Email": restaurant["email"],
+            "Company No": restaurant["company_number"],
+            "VAT No": restaurant["vat_number"],
+            "Cuisine": restaurant["cuisine_type"],
+            "Covers": restaurant["num_covers"],
+            "Locations": restaurant["num_branches"],
+        }
+        for label, val in fields.items():
+            if val:
+                lines.append(f"  {label}: {val}")
+
+    profile_summary = "\n".join(lines) if lines else "  (no optional details saved)"
+
+    await update.message.reply_text(
+        f"*All set! {name} is fully registered.*\n\n"
+        f"*Profile saved:*\n{profile_summary}\n\n"
+        f"You can update any of these later with /profile\n\n"
+        f"*What to do next:*\n"
+        f"  • Send a voice note about today's shift\n"
+        f"  • Send a photo of an invoice\n"
+        f"  • Type /features to see everything the bot can do",
+        parse_mode="Markdown",
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def _reg_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+    restaurant = get_restaurant_by_group(chat_id)
+    if restaurant:
+        await update.message.reply_text(
+            f"Profile setup cancelled. *{restaurant['name']}* is still registered and ready to use.\n"
+            f"Run /profile any time to add your company details.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text("Registration cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/profile — update company details for an already-registered restaurant."""
+    chat_id = str(update.effective_chat.id)
+    restaurant = get_restaurant_by_group(chat_id)
+    if not restaurant:
+        await update.message.reply_text(
+            "Not registered yet. Use /register to get started."
+        )
+        return ConversationHandler.END
+
+    context.user_data["reg_chat_id"] = chat_id
+    await update.message.reply_text(
+        f"*Updating profile for {restaurant['name']}*\n\n"
+        f"*Step 1 of 4 — Location*\n"
+        f"What is your address? Include street, city and postcode.\n\n"
+        f"{_SKIP_HINT}",
+        parse_mode="Markdown",
+    )
+    return REG_LOCATION
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2603,7 +2817,6 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*Latest change:* {info['msg']}\n"
         f"*Deploy ID:* `{info['deploy_id']}`"
     )
-    )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -2776,9 +2989,29 @@ def main():
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # Registration wizard — must be added before generic message handlers
+    _text_filter = filters.TEXT & ~filters.COMMAND
+    reg_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("register", cmd_register),
+            CommandHandler("profile", cmd_profile),
+        ],
+        states={
+            REG_NAME:     [MessageHandler(_text_filter, _reg_got_name)],
+            REG_LOCATION: [MessageHandler(_text_filter, _reg_got_location)],
+            REG_CONTACT:  [MessageHandler(_text_filter, _reg_got_contact)],
+            REG_LEGAL:    [MessageHandler(_text_filter, _reg_got_legal)],
+            REG_BUSINESS: [MessageHandler(_text_filter, _reg_got_business)],
+        },
+        fallbacks=[CommandHandler("cancel", _reg_cancel)],
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+    )
+    app.add_handler(reg_conv)
+
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("correct", cmd_correct))

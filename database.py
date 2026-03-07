@@ -30,9 +30,36 @@ def init_db():
                 name TEXT NOT NULL,
                 telegram_group_id TEXT UNIQUE,
                 owner_telegram_id TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                legal_name TEXT,
+                address TEXT,
+                city TEXT,
+                postcode TEXT,
+                phone TEXT,
+                email TEXT,
+                website TEXT,
+                company_number TEXT,
+                vat_number TEXT,
+                cuisine_type TEXT,
+                num_covers INTEGER,
+                num_branches INTEGER,
+                profile_complete INTEGER DEFAULT 0
             )
         """)
+
+        # Migrate older databases that don't have the profile columns yet
+        _profile_cols = [
+            ("legal_name", "TEXT"), ("address", "TEXT"), ("city", "TEXT"),
+            ("postcode", "TEXT"), ("phone", "TEXT"), ("email", "TEXT"),
+            ("website", "TEXT"), ("company_number", "TEXT"), ("vat_number", "TEXT"),
+            ("cuisine_type", "TEXT"), ("num_covers", "INTEGER"),
+            ("num_branches", "INTEGER"), ("profile_complete", "INTEGER DEFAULT 0"),
+        ]
+        for col, col_type in _profile_cols:
+            try:
+                c.execute(f"ALTER TABLE restaurants ADD COLUMN {col} {col_type}")
+            except Exception:
+                pass  # column already exists
 
         c.execute("""
             CREATE TABLE IF NOT EXISTS staff (
@@ -210,6 +237,31 @@ def update_restaurant_name(group_id: str, name: str):
         c.execute(
             "UPDATE restaurants SET name = ? WHERE telegram_group_id = ?",
             (name, group_id),
+        )
+        conn.commit()
+
+
+def update_restaurant_profile(group_id: str, **fields):
+    """Update any subset of profile fields for a restaurant.
+    Allowed keys: legal_name, address, city, postcode, phone, email,
+    website, company_number, vat_number, cuisine_type, num_covers,
+    num_branches, profile_complete.
+    """
+    allowed = {
+        "legal_name", "address", "city", "postcode", "phone", "email",
+        "website", "company_number", "vat_number", "cuisine_type",
+        "num_covers", "num_branches", "profile_complete",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [group_id]
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            f"UPDATE restaurants SET {set_clause} WHERE telegram_group_id = ?",
+            values,
         )
         conn.commit()
 
