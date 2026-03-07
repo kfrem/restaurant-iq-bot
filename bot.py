@@ -2813,17 +2813,7 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
 
-    source_label = "Railway" if info["source"] == "railway" else "Local dev"
-
-    text = (
-        f"*Restaurant-IQ — Deployment Info*\n\n"
-        f"*Environment:* {source_label}\n"
-        f"*Branch:* `{info['branch']}`\n"
-        f"*Commit:* `{info['hash']}`\n"
-        f"*Deployed:* {info['date']}\n"
-        f"*Latest change:* {info['msg']}\n"
-        f"*Deploy ID:* `{info['deploy_id']}`"
-    )
+    text = f"Commit: `{info['hash']}`\nDeployed: {info['date']}"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
