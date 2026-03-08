@@ -365,7 +365,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
-        "  /ask [question]        — AI-powered help (anything about the bot)\n"
+        "  /ask [question]        — AI-powered help (anything about Restaurant IQ)\n"
         "  /support [message]     — Contact the support team\n"
         "  /supportstatus         — Check your support tickets\n\n"
         "Every message from any team member in this group is captured and analysed.\n"
@@ -419,7 +419,7 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _do_register(name, chat_id, user_id, update.effective_user.first_name)
         context.user_data["reg_chat_id"] = chat_id
         await update.message.reply_text(
-            f"*{name}* is now registered and your bot is live!\n\n"
+            f"*{name}* is now registered and Restaurant IQ is live!\n\n"
             f"Team members can start sending voice notes, photos and texts right away.\n\n"
             f"─────────────────────\n"
             f"*Optional: Complete your company profile*\n"
@@ -462,7 +462,7 @@ async def _reg_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _do_register(name, chat_id, user_id, update.effective_user.first_name)
 
     await update.message.reply_text(
-        f"*{name}* is now registered and your bot is live!\n\n"
+        f"*{name}* is now registered and Restaurant IQ is live!\n\n"
         f"Team members can start sending voice notes, photos and texts right away.\n\n"
         f"─────────────────────\n"
         f"*Optional: Complete your company profile*\n"
@@ -596,7 +596,7 @@ async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*What to do next:*\n"
         f"  • Send a voice note about today's shift\n"
         f"  • Send a photo of an invoice\n"
-        f"  • Type /features to see everything the bot can do",
+        f"  • Type /features to see everything Restaurant IQ can do",
         parse_mode="Markdown",
     )
     context.user_data.clear()
@@ -1606,7 +1606,7 @@ async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     all_restaurants = get_all_restaurants()
     if not all_restaurants:
-        await update.message.reply_text("No restaurants registered on this bot yet.")
+        await update.message.reply_text("No restaurants registered yet.")
         return
 
     # Gather financials for every site
@@ -1856,7 +1856,7 @@ async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_all_entries(restaurant["id"])
     await update.message.reply_text(
         f"All data cleared for {restaurant['name']}.\n\n"
-        f"Your registration is intact — the bot will continue capturing new messages.\n"
+        f"Your registration is intact — Restaurant IQ will continue capturing new messages.\n"
         f"Use /import to backfill historical data if needed."
     )
 
@@ -1879,12 +1879,12 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Ask me anything about the bot.\n\n"
+            "Ask anything about Restaurant IQ.\n\n"
             "Examples:\n"
             "  /ask how do I fix a wrong entry?\n"
             "  /ask how do I record tips from last week?\n"
             "  /ask what is the best way to get the weekly report?\n"
-            "  /ask how do I import data from before I started using the bot?\n"
+            "  /ask how do I import data from before I started using Restaurant IQ?\n"
             "  /ask what does the inspection report cover?"
         )
         return
@@ -2518,10 +2518,10 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Message 1: What you can send
     await update.message.reply_text(
-        "RESTAURANT-IQ — WHAT THIS BOT DOES\n"
+        "RESTAURANT IQ — HOW IT WORKS\n"
         "════════════════════════════════════\n\n"
         "Your team sends messages to this group as normal.\n"
-        "The bot reads every message, extracts the useful data,\n"
+        "Restaurant IQ reads every message, extracts the useful data,\n"
         "and builds a picture of your restaurant's week.\n"
         "No forms. No spreadsheets. Just talk.\n\n"
         "────────────────────────────────────\n"
@@ -2543,7 +2543,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Works for: supplier invoices, delivery dockets, utility bills, repair invoices.\n"
         "Best results: photo flat, good light, all four corners visible.\n\n"
         "3. TEXT MESSAGES\n"
-        "Type anything — the bot captures and categorises it.\n\n"
+        "Type anything — Restaurant IQ captures and categorises it.\n\n"
         "Examples:\n"
         "  \"Butcher raised beef prices by 9% this week\"\n"
         "  \"Ahmed was 40 mins late — third time this month\"\n"
@@ -2553,7 +2553,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Message 2: What gets extracted + limitations
     await update.message.reply_text(
-        "WHAT THE BOT EXTRACTS AUTOMATICALLY\n"
+        "WHAT RESTAURANT IQ EXTRACTS AUTOMATICALLY\n"
         "══════════════════════════════════════\n\n"
         "You don't need a special format. The AI understands plain speech.\n\n"
         "REVENUE\n"
@@ -2579,7 +2579,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "────────────────────────────────────\n"
         "WHAT IT CANNOT CAPTURE\n"
         "────────────────────────────────────\n\n"
-        "  ✗ Revenue you don't report — only knows what your team tells it\n"
+        "  ✗ Revenue you don't report — Restaurant IQ only knows what your team tells it\n"
         "  ✗ Staff hours or wages — no labour cost tracking\n"
         "  ✗ Till or EPOS data — no integration with payment systems\n"
         "  ✗ Blurry or dark invoice photos — AI cannot read unclear images\n"
@@ -2600,13 +2600,13 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  P&L for any period — revenue vs invoiced costs = gross profit.\n"
         "  Try: /financials   /financials this month   /financials March 2026\n\n"
         "/recall [date or period]\n"
-        "  Ask the bot what happened on any day or week.\n"
+        "  Ask what happened on any day or week.\n"
         "  The AI summarises all entries for that period.\n"
         "  Try: /recall yesterday   /recall 5 May   /recall last week   /recall March\n\n"
         "/outstanding\n"
         "  All unpaid invoices sorted by due date.\n"
         "  Shows supplier, amount, and days until due (or days overdue).\n"
-        "  The bot also sends an automatic 9am reminder to this group\n"
+        "  An automatic 9am reminder is also sent to this group\n"
         "  when any invoice is due within 3 days or is overdue.\n\n"
         "/markpaid [invoice number]\n"
         "  Mark an invoice as settled. Get the number from /outstanding.\n"
@@ -2686,18 +2686,18 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "gives the AI enough to produce sharp weekly insights.\n\n"
         "INVOICES:\n"
         "Photograph every invoice the day it arrives — not in batches.\n"
-        "The bot tracks due dates from the invoice date, so late uploads\n"
+        "Restaurant IQ tracks due dates from the invoice date, so late uploads\n"
         "mean you miss payment warnings.\n\n"
         "YOUR TEAM:\n"
         "Add all staff to this Telegram group.\n"
-        "The bot records who sent each update, so the weekly report\n"
+        "Restaurant IQ records who sent each update, so the weekly report\n"
         "can link issues and wins to the right shifts and people.\n\n"
         "WHAT GOOD ENTRIES LOOK LIKE:\n"
         "  ✅ \"Friday lunch: 44 covers, £1,180. Veg soup sold out at 1pm.\n"
         "       Two tables complimented the new sea bass.\"\n\n"
         "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
         "  ✅ \"Walk-in fridge alarm at 6am — engineer confirmed false alarm.\"\n\n"
-        "WHAT THE BOT IGNORES:\n"
+        "WHAT GETS IGNORED:\n"
         "  ✗ Short replies like \"ok\" or \"thanks\" — no useful data\n"
         "  ✗ Forwarded articles or links\n"
         "  ✗ Messages sent in any other group — only reads this one\n\n"
@@ -3684,7 +3684,7 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Loading demo data here would mix fake data with your real records.\n\n"
             f"To try the demo safely:\n"
             f"  1. Create a new Telegram group\n"
-            f"  2. Add the bot to that group\n"
+            f"  2. Add Restaurant IQ to that group\n"
             f"  3. Run /demo there\n\n"
             f"Your real data in this group is untouched."
         )

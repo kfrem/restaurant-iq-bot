@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Restaurant-IQ Bot — Complete Setup & Control Guide</title>
+<title>Restaurant IQ — Setup & Control Guide</title>
 <style>
   /* ===== FONTS ===== */
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -454,7 +454,7 @@
       <div class="logo-text">Restaurant<span>IQ</span></div>
     </div>
     <h1>Complete Setup & Control Guide</h1>
-    <p>Everything you need to install, configure, and run the Restaurant-IQ Bot from zero to live in under 30 minutes.</p>
+    <p>Everything you need to install, configure, and run Restaurant IQ from zero to live in under 30 minutes.</p>
     <div class="header-meta">
       <span class="meta-pill">📖 Step-by-Step</span>
       <span class="meta-pill">🔧 All Commands</span>
@@ -470,7 +470,7 @@
   <nav class="toc">
     <h2>📋 Contents</h2>
     <div class="toc-grid">
-      <a href="#what-is-it" class="toc-item"><span class="toc-num">1</span> What Is This Bot?</a>
+      <a href="#what-is-it" class="toc-item"><span class="toc-num">1</span> What Is Restaurant IQ?</a>
       <a href="#before-you-start" class="toc-item"><span class="toc-num">2</span> Before You Start</a>
       <a href="#step-by-step" class="toc-item"><span class="toc-num">3</span> Setup Step-by-Step</a>
       <a href="#env-variables" class="toc-item"><span class="toc-num">4</span> Environment Variables</a>
@@ -493,13 +493,13 @@
     <div class="section-header">
       <div class="section-icon">🍽️</div>
       <div class="section-title">
-        <h2>1. What Is This Bot?</h2>
+        <h2>1. What Is Restaurant IQ?</h2>
         <p>The big picture in plain English</p>
       </div>
     </div>
 
     <div class="card">
-      <p style="font-size:15px; color:var(--mid); margin-bottom:20px;">Restaurant-IQ is a <strong>Telegram chatbot</strong> for restaurant owners and their teams. Staff send normal messages — voice notes, photos of invoices, text updates — and the bot automatically converts everything into business intelligence.</p>
+      <p style="font-size:15px; color:var(--mid); margin-bottom:20px;">Restaurant IQ is a <strong>chat-based management platform</strong> for restaurant owners and their teams. Staff send normal messages — voice notes, photos of invoices, text updates — and the system automatically converts everything into business intelligence.</p>
 
       <div class="grid-3" style="margin-bottom:20px;">
         <div style="text-align:center; padding:16px; background:var(--brand-light); border-radius:12px;">
@@ -543,7 +543,7 @@
         <ul style="font-size:14px; color:var(--mid); padding-left:20px; line-height:2;">
           <li>Python 3.11+</li>
           <li>SQLite database (zero server setup)</li>
-          <li>Telegram Bot API (python-telegram-bot)</li>
+          <li>Telegram API (python-telegram-bot)</li>
           <li>Google Gemini / Groq / Claude AI</li>
           <li>faster-whisper (voice transcription)</li>
           <li>ReportLab (PDF generation)</li>
@@ -587,7 +587,7 @@
           <div class="step-number">C</div>
           <div class="step-content">
             <h4>A Railway account (for hosting)</h4>
-            <p>Free tier available. Sign up at <strong>railway.app</strong> with your GitHub account. This is where the bot runs 24/7.</p>
+            <p>Free tier available. Sign up at <strong>railway.app</strong> with your GitHub account. This is where Restaurant IQ runs 24/7.</p>
           </div>
         </div>
         <div class="step">
@@ -615,19 +615,19 @@
       <div class="section-icon">🔧</div>
       <div class="section-title">
         <h2>3. Setup Step-by-Step</h2>
-        <p>From zero to a running bot — follow in order</p>
+        <p>From zero to a running system — follow in order</p>
       </div>
     </div>
 
     <!-- STEP 1: Create Telegram Bot -->
     <div class="card">
-      <div class="card-title">🤖 Step 1 — Create Your Telegram Bot</div>
+      <div class="card-title">🤖 Step 1 — Create Your Telegram Access</div>
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
           <div class="step-content">
             <h4>Open Telegram and search for <code>@BotFather</code></h4>
-            <p>This is Telegram's official bot-creation tool. It's a verified account with a blue tick.</p>
+            <p>This is Telegram's official tool for creating Telegram integrations. It's a verified account with a blue tick.</p>
           </div>
         </div>
         <div class="step">
@@ -640,7 +640,7 @@
         <div class="step">
           <div class="step-number">3</div>
           <div class="step-content">
-            <h4>Copy the <strong>bot token</strong></h4>
+            <h4>Copy the <strong>access token</strong></h4>
             <p>BotFather will send you a message like:<br><code>Use this token to access the HTTP API: 1234567890:ABCdef...</code><br>Copy the entire token and save it somewhere safe. This is your <code>TELEGRAM_BOT_TOKEN</code>.</p>
           </div>
         </div>
@@ -648,7 +648,7 @@
           <div class="step-number">4</div>
           <div class="step-content">
             <h4>Disable privacy mode (IMPORTANT for group chats)</h4>
-            <p>Send <code>/setprivacy</code> to BotFather → select your bot → select <code>Disable</code>. This allows the bot to read all messages in a group, not just commands.</p>
+            <p>Send <code>/setprivacy</code> to BotFather → select your entry → select <code>Disable</code>. This allows Restaurant IQ to read all messages in a group, not just commands.</p>
           </div>
         </div>
       </div>
@@ -696,7 +696,7 @@
           <div class="step-number">3</div>
           <div class="step-content">
             <h4>Add a Volume for persistent database storage</h4>
-            <p>In Railway: go to your service → <strong>+ Add Volume</strong> → mount path: <code>/data</code>. This keeps your database safe when the bot restarts.</p>
+            <p>In Railway: go to your service → <strong>+ Add Volume</strong> → mount path: <code>/data</code>. This keeps your database safe when the system restarts.</p>
           </div>
         </div>
         <div class="step">
@@ -710,7 +710,7 @@
           <div class="step-number">5</div>
           <div class="step-content">
             <h4>Click <strong>Deploy</strong></h4>
-            <p>Watch the build logs. After 2–3 minutes you should see: <code>Bot started successfully</code>.</p>
+            <p>Watch the build logs. After 2–3 minutes you should see: <code>Restaurant IQ started successfully</code>.</p>
           </div>
         </div>
       </div>
@@ -727,12 +727,12 @@
       <div class="section-icon">⚙️</div>
       <div class="section-title">
         <h2>4. Environment Variables</h2>
-        <p>All settings that control how the bot behaves</p>
+        <p>All settings that control how the system behaves</p>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">🔑 Required Variables — Bot Won't Start Without These</div>
+      <div class="card-title">🔑 Required Variables — Restaurant IQ Won't Start Without These</div>
       <table class="env-table">
         <thead>
           <tr>
@@ -745,7 +745,7 @@
         <tbody>
           <tr>
             <td>TELEGRAM_BOT_TOKEN</td>
-            <td>Your bot's secret key from BotFather</td>
+            <td>Your access token from BotFather</td>
             <td>Step 1 above — copy from BotFather message</td>
             <td><span class="badge badge-required">Required</span></td>
           </tr>
@@ -854,7 +854,7 @@
           <div class="step-number">1</div>
           <div class="step-content">
             <h4>After deploying, find your service URL</h4>
-            <p>In Railway → your project → your service → <strong>Settings</strong> tab → scroll to <strong>Networking</strong> → click <strong>Generate Domain</strong>. This gives you a URL like <code>yourbot.railway.app</code>. Your bot dashboard will live at <code>yourbot.railway.app/dashboard/TOKEN</code>.</p>
+            <p>In Railway → your project → your service → <strong>Settings</strong> tab → scroll to <strong>Networking</strong> → click <strong>Generate Domain</strong>. This gives you a URL like <code>yoursite.railway.app</code>. Your Restaurant IQ dashboard will live at <code>yoursite.railway.app/dashboard/TOKEN</code>.</p>
           </div>
         </div>
         <div class="step">
@@ -867,8 +867,8 @@
         <div class="step">
           <div class="step-number">3</div>
           <div class="step-content">
-            <h4>Verify the bot is alive</h4>
-            <p>Open Telegram, find your bot (by the username you chose), send <code>/start</code>. You should receive a welcome message within 5 seconds.</p>
+            <h4>Verify Restaurant IQ is live</h4>
+            <p>Open Telegram, find your Restaurant IQ entry (by the username you chose), send <code>/start</code>. You should receive a welcome message within 5 seconds.</p>
           </div>
         </div>
         <div class="step">
@@ -886,18 +886,18 @@
         <div class="card-title">✅ Healthy deployment shows</div>
         <ul style="font-size:14px; color:var(--mid); padding-left:20px; line-height:2.2;">
           <li>Green "Active" status badge</li>
-          <li><code>Bot started successfully</code> in logs</li>
-          <li><code>Dashboard running on port XXXX</code></li>
-          <li>Bot replies to <code>/start</code> in Telegram</li>
+          <li><code>Restaurant IQ started successfully</code> in logs</li>
+<li><code>Dashboard running on port XXXX</code></li>
+          <li>Restaurant IQ replies to <code>/start</code> in Telegram</li>
           <li>Volume mounted at <code>/data</code></li>
         </ul>
       </div>
       <div class="card">
         <div class="card-title">❌ Common deployment errors</div>
         <ul style="font-size:14px; color:var(--mid); padding-left:20px; line-height:2.2;">
-          <li><code>TELEGRAM_BOT_TOKEN not set</code> — add the variable</li>
+          <li><code>TELEGRAM_BOT_TOKEN not set</code> — add the variable in Railway</li>
           <li><code>GEMINI_API_KEY missing</code> — add the variable</li>
-          <li>Bot token conflict — another process using same token</li>
+          <li>Token conflict — another process using same token</li>
           <li>Database permission error — check volume is mounted</li>
           <li>Build fails — check Python version is 3.11+</li>
         </ul>
@@ -920,11 +920,11 @@
 
     <div class="alert alert-tip">
       <span class="alert-icon">💡</span>
-      <div>Each restaurant needs its <strong>own Telegram group</strong>. Add the bot to the group first, then register. One bot instance can manage unlimited restaurants.</div>
+      <div>Each restaurant needs its <strong>own Telegram group</strong>. Add Restaurant IQ to the group first, then register. One instance can manage unlimited restaurants.</div>
     </div>
 
     <div class="card">
-      <div class="card-title">🔗 Step 1 — Add the bot to a Telegram group</div>
+      <div class="card-title">🔗 Step 1 — Add Restaurant IQ to a Telegram group</div>
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
@@ -936,24 +936,24 @@
         <div class="step">
           <div class="step-number">2</div>
           <div class="step-content">
-            <h4>Add your bot to the group</h4>
-            <p>In the group → tap the group name → <strong>Add Members</strong> → search for your bot's username → add it. Give it <strong>Admin</strong> permissions so it can read all messages.</p>
+            <h4>Add Restaurant IQ to the group</h4>
+            <p>In the group → tap the group name → <strong>Add Members</strong> → search for your Restaurant IQ username → add it. Give it <strong>Admin</strong> permissions so it can read all messages.</p>
           </div>
         </div>
         <div class="step">
           <div class="step-number">3</div>
           <div class="step-content">
             <h4>In the group, type <code>/register The Crown Inn</code></h4>
-            <p>Replace "The Crown Inn" with your restaurant name. The bot will start a 4-step conversation to collect company details.</p>
+            <p>Replace "The Crown Inn" with your restaurant name. Restaurant IQ will start a 4-step conversation to collect company details.</p>
           </div>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">📝 Registration conversation — what the bot asks</div>
+      <div class="card-title">📝 Registration conversation — what Restaurant IQ asks</div>
       <table class="cmd-table">
-        <thead><tr><th>Step</th><th>Bot asks for</th><th>Example answer</th></tr></thead>
+        <thead><tr><th>Step</th><th>Restaurant IQ asks for</th><th>Example answer</th></tr></thead>
         <tbody>
           <tr><td>Step 1</td><td>Legal company name</td><td>The Crown Inn Ltd</td></tr>
           <tr><td>Step 2</td><td>Address, city, postcode</td><td>15 High Street, Oxford, OX1 1AA</td></tr>
@@ -966,7 +966,7 @@
 
     <div class="card">
       <div class="card-title">👥 Adding staff</div>
-      <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">Staff are <strong>automatically registered</strong> the moment they send their first message in the group. No manual setup needed. The bot captures their Telegram name and assigns them the role "staff".</p>
+      <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">Staff are <strong>automatically registered</strong> the moment they send their first message in the group. No manual setup needed. Restaurant IQ captures their Telegram name and assigns them the role "staff".</p>
       <div class="alert alert-success" style="margin:0;">
         <span class="alert-icon">✅</span>
         <div>Just invite staff to the Telegram group and tell them to start sending voice notes or text updates. That's it.</div>
@@ -1001,7 +1001,7 @@
       </div>
       <div class="card">
         <div class="card-title">📸 Invoice Photos (Point and shoot)</div>
-        <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">Take a photo of any delivery invoice or receipt and send it to the group. The bot extracts:</p>
+        <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">Take a photo of any delivery invoice or receipt and send it to the group. Restaurant IQ extracts:</p>
         <ul style="font-size:13.5px; color:var(--mid); padding-left:20px; line-height:2;">
           <li>Supplier name</li>
           <li>Invoice date &amp; due date</li>
@@ -1044,7 +1044,7 @@
 
     <div class="alert alert-warn">
       <span class="alert-icon">⚠️</span>
-      <div><strong>Important:</strong> The bot needs to be an <strong>Admin</strong> in the group to read all messages (not just commands). If staff messages are not being captured, check the bot's admin status in group settings.</div>
+      <div><strong>Important:</strong> Restaurant IQ needs to be an <strong>Admin</strong> in the group to read all messages (not just commands). If staff messages are not being captured, check its admin status in group settings.</div>
     </div>
   </section>
 
@@ -1056,7 +1056,7 @@
     <div class="section-header">
       <div class="section-icon">💬</div>
       <div class="section-title">
-        <h2>8. All Bot Commands</h2>
+        <h2>8. All Commands</h2>
         <p>Complete reference — every command and what it does</p>
       </div>
     </div>
@@ -1218,12 +1218,12 @@
         <table class="cmd-table">
           <thead><tr><th>Command</th><th>What It Does</th></tr></thead>
           <tbody>
-            <tr><td>/ask How do I export to Xero?</td><td>AI-powered help — ask anything about the bot</td></tr>
-            <tr><td>/support My bot isn't replying</td><td>Submit a support ticket to the app owner</td></tr>
+            <tr><td>/ask How do I export to Xero?</td><td>AI-powered help — ask anything about Restaurant IQ</td></tr>
+            <tr><td>/support Restaurant IQ isn't replying</td><td>Submit a support ticket to the app owner</td></tr>
             <tr><td>/supportstatus</td><td>Check your open support tickets</td></tr>
             <tr><td>/features</td><td>5-message feature guide (split into readable sections)</td></tr>
             <tr><td>/dashboard</td><td>Get private link to the live web dashboard</td></tr>
-            <tr><td>/version</td><td>Show bot version, commit hash, deployment date</td></tr>
+            <tr><td>/version</td><td>Show version, commit hash, deployment date</td></tr>
           </tbody>
         </table>
       </div>
@@ -1254,7 +1254,7 @@
       <div class="section-icon">🤖</div>
       <div class="section-title">
         <h2>9. AI Tiers &amp; API Keys</h2>
-        <p>How the bot automatically scales with restaurant count</p>
+        <p>How Restaurant IQ automatically scales with restaurant count</p>
       </div>
     </div>
 
@@ -1284,10 +1284,10 @@
 
     <div class="card">
       <div class="card-title">🔄 How tier switching works</div>
-      <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">The bot automatically counts how many restaurants are registered. It picks the right AI provider based on that count. <strong>You don't need to do anything</strong> — just add the API keys for the tiers you need.</p>
+      <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">Restaurant IQ automatically counts how many restaurants are registered and picks the right AI provider based on that count. <strong>You don't need to do anything</strong> — just add the API keys for the tiers you need.</p>
       <div class="alert alert-tip" style="margin:0;">
         <span class="alert-icon">💡</span>
-        <div>If an API key is missing for a tier, the bot falls back to the previous tier. So if you only have a Gemini key, all analysis always uses Gemini regardless of restaurant count.</div>
+        <div>If an API key is missing for a tier, the system falls back to the previous tier. So if you only have a Gemini key, all analysis always uses Gemini regardless of restaurant count.</div>
       </div>
     </div>
 
@@ -1317,14 +1317,14 @@
           <div class="step-number">1</div>
           <div class="step-content">
             <h4>In your restaurant's Telegram group, type <code>/dashboard</code></h4>
-            <p>The bot replies with a private link unique to your restaurant.</p>
+            <p>Restaurant IQ replies with a private link unique to your restaurant.</p>
           </div>
         </div>
         <div class="step">
           <div class="step-number">2</div>
           <div class="step-content">
             <h4>Click the link — dashboard opens in any browser</h4>
-            <p>URL format: <code>https://yourbot.railway.app/dashboard/YOUR-UNIQUE-TOKEN</code></p>
+            <p>URL format: <code>https://yoursite.railway.app/dashboard/YOUR-UNIQUE-TOKEN</code></p>
           </div>
         </div>
         <div class="step">
@@ -1375,7 +1375,7 @@
         <div class="card-title" style="color:#7C3AED;">⚖️ Tips Act 2023</div>
         <p style="font-size:14px; color:var(--mid); margin-bottom:12px;">The Employment (Allocation of Tips) Act 2023 requires employers to keep a 3-year record of all tips and their distribution.</p>
         <ul style="font-size:13.5px; color:var(--mid); padding-left:20px; line-height:2;">
-          <li>Bot auto-detects tips in any message</li>
+          <li>Restaurant IQ auto-detects tips in any message</li>
           <li>Logs date, amount, type (cash/card/both), staff count</li>
           <li>3-year retention built in (no auto-delete)</li>
           <li><code>/tips</code> — view log for any period</li>
@@ -1434,20 +1434,20 @@
     </div>
 
     <div class="card">
-      <div class="card-title">❓ The bot isn't responding to messages</div>
+      <div class="card-title">❓ Restaurant IQ isn't responding to messages</div>
       <div class="steps">
         <div class="step">
           <div class="step-number">1</div>
           <div class="step-content">
-            <h4>Check the bot is an Admin in the group</h4>
-            <p>Group settings → Admins → make sure your bot is listed with "Read messages" permission.</p>
+            <h4>Check Restaurant IQ is an Admin in the group</h4>
+            <p>Group settings → Admins → make sure Restaurant IQ is listed with "Read messages" permission.</p>
           </div>
         </div>
         <div class="step">
           <div class="step-number">2</div>
           <div class="step-content">
             <h4>Verify privacy mode is disabled</h4>
-            <p>In BotFather, send <code>/setprivacy</code> → select your bot → confirm it says <code>DISABLED</code>. Then remove and re-add the bot to the group.</p>
+            <p>In BotFather, send <code>/setprivacy</code> → select your entry → confirm it says <code>DISABLED</code>. Then remove and re-add Restaurant IQ to the group.</p>
           </div>
         </div>
         <div class="step">
@@ -1466,7 +1466,7 @@
         <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
         <tbody>
           <tr>
-            <td>Bot not registered</td>
+            <td>Not registered</td>
             <td>Group hasn't been registered yet</td>
             <td>Type <code>/register RestaurantName</code></td>
           </tr>
@@ -1492,8 +1492,8 @@
           </tr>
           <tr>
             <td>PDF not sending</td>
-            <td>Bot doesn't have file permission in group</td>
-            <td>Give bot full Admin permissions</td>
+            <td>Restaurant IQ doesn't have file permission in group</td>
+            <td>Give Restaurant IQ full Admin permissions</td>
           </tr>
         </tbody>
       </table>
@@ -1503,8 +1503,8 @@
       <div class="card-title">🆘 Getting help</div>
       <div class="grid-2">
         <div>
-          <p style="font-size:14px; color:var(--mid); margin-bottom:8px;"><strong>Within the bot:</strong></p>
-          <p style="font-size:14px; color:var(--mid);">Type <code>/ask [your question]</code> — the AI will answer anything about how to use the bot.</p>
+          <p style="font-size:14px; color:var(--mid); margin-bottom:8px;"><strong>Within Restaurant IQ:</strong></p>
+          <p style="font-size:14px; color:var(--mid);">Type <code>/ask [your question]</code> — the AI will answer anything about how to use Restaurant IQ.</p>
           <br>
           <p style="font-size:14px; color:var(--mid);">Type <code>/support [message]</code> — submits a ticket to the app owner who can reply directly via Telegram.</p>
         </div>
@@ -1522,7 +1522,7 @@
 </div><!-- /container -->
 
 <footer>
-  <strong>Restaurant-IQ Bot</strong> — Complete Setup Guide &nbsp;|&nbsp; Version 2.0 &nbsp;|&nbsp; Generated March 2026<br>
+  <strong>Restaurant IQ</strong> — Complete Setup Guide &nbsp;|&nbsp; Version 2.0 &nbsp;|&nbsp; Generated March 2026<br>
   <span style="font-size:12px;">This document is confidential. For internal and sales team use only.</span>
 </footer>
 
