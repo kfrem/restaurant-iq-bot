@@ -9,11 +9,14 @@ Exposes:
 """
 
 import json
+import os
 import threading
 import logging
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 logger = logging.getLogger(__name__)
 
@@ -546,6 +549,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8", _LANDING_HTML.encode())
             return
 
+        if path == "/guide":
+            self._serve_static("setup-guide.html")
+            return
+
+        if path == "/sales":
+            self._serve_static("sales-deck.html")
+            return
+
         parts = [p for p in path.split("/") if p]
 
         # /api/<token>
@@ -567,6 +578,15 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Dashboard DB error: %s", e)
             return None
+
+    def _serve_static(self, filename: str):
+        filepath = os.path.join(_HERE, filename)
+        try:
+            with open(filepath, "rb") as f:
+                body = f.read()
+            self._send(200, "text/html; charset=utf-8", body)
+        except FileNotFoundError:
+            self._send(404, "text/plain", b"File not found")
 
     def _serve_dashboard(self, token: str):
         restaurant = self._get_restaurant(token)
