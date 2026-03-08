@@ -3660,7 +3660,11 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
 
-    text = f"Commit: `{info['hash']}`\nDeployed: {info['date']}"
+    text = (
+        f"*Restaurant IQ* — v1.1 (Rebrand)\n"
+        f"Commit: `{info['hash']}`\n"
+        f"Deployed: {info['date']}"
+    )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
