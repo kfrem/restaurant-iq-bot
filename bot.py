@@ -98,6 +98,11 @@ from database import (
     get_staff_entry_counts,
     get_eightysix_trends,
     delete_entries_older_than,
+    set_stock_par,
+    update_stock_count,
+    get_stock_status,
+    get_low_stock_items,
+    delete_stock_item,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -318,6 +323,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /today                 — Everything logged today\n"
         "  /financials            — Revenue, costs, labour and net margin\n"
         "  /groupreport           — Consolidated P&L across ALL your sites\n"
+        "  /stock                 — Stock levels vs par (all items)\n"
+        "  /stock low             — Only items below par level\n"
+        "  /stock set item 10 kg  — Set par level for an item\n"
+        "  /stock count item 3 kg — Log current stock count\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
@@ -1023,6 +1032,224 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Note: revenue = reported takings. Costs = photographed invoices.\n"
         f"Labour = entries via /labour. Use /labour £X [description] to record wages."
     )
+
+
+async def cmd_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /stock                        — show all stock levels vs par
+    /stock low                    — show only items below par
+    /stock set chicken 10 kg      — set par level for an item
+    /stock count chicken 3 kg     — record current stock count
+    /stock remove chicken         — remove an item from the list
+
+    Examples:
+      /stock set beef mince 5 kg
+      /stock set milk 12 litres
+      /stock count beef mince 2 kg
+      /stock low
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    args = list(context.args) if context.args else []
+    rid = restaurant["id"]
+
+    def _parse_item_amount(tokens):
+        """
+        Parse 'chicken 3 kg' or 'chicken 3kg' or 'beef mince 2.5 kg'
+        into (item_name, amount, unit).
+        Handles multi-word item names by treating the last numeric token
+        (plus optional trailing unit) as the amount.
+        """
+        if not tokens:
+            return None, None, ""
+        # Walk backwards to find the first numeric token
+        unit = ""
+        amount = None
+        name_end = len(tokens)
+        for i in range(len(tokens) - 1, -1, -1):
+            tok = tokens[i]
+            # Strip trailing unit letters from the token e.g. "3kg" → "3"
+            num_part = tok.rstrip("abcdefghijklmnopqrstuvwxyz")
+            unit_part = tok[len(num_part):]
+            try:
+                amount = float(num_part)
+                if unit_part:
+                    unit = unit_part
+                elif i + 1 < len(tokens):
+                    # next token might be the unit if it's purely alphabetic
+                    next_tok = tokens[i + 1]
+                    if next_tok.isalpha() and not _is_numeric(next_tok):
+                        unit = next_tok
+                        name_end = i
+                    else:
+                        name_end = i
+                else:
+                    name_end = i
+                break
+            except ValueError:
+                continue
+        if amount is None:
+            return " ".join(tokens), None, ""
+        item_name = " ".join(tokens[:name_end])
+        return item_name.strip(), amount, unit.strip()
+
+    def _is_numeric(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    subcommand = args[0].lower() if args else "status"
+
+    # ── /stock set <item> <amount> [unit] ─────────────────────────────────────
+    if subcommand == "set":
+        item_name, par_level, unit = _parse_item_amount(args[1:])
+        if not item_name or par_level is None:
+            await update.message.reply_text(
+                "Usage: /stock set chicken 10 kg\n"
+                "Multi-word: /stock set beef mince 5 kg"
+            )
+            return
+        set_stock_par(rid, item_name, par_level, unit)
+        unit_str = f" {unit}" if unit else ""
+        await update.message.reply_text(
+            f"Par level set: {item_name.title()} — {par_level:g}{unit_str}\n\n"
+            f"Now log counts with: /stock count {item_name} <amount>{unit_str}"
+        )
+
+    # ── /stock count <item> <amount> [unit] ───────────────────────────────────
+    elif subcommand in ("count", "update"):
+        item_name, current_level, unit = _parse_item_amount(args[1:])
+        if not item_name or current_level is None:
+            await update.message.reply_text(
+                "Usage: /stock count chicken 3 kg\n"
+                "Item must have a par level set first: /stock set chicken 10 kg"
+            )
+            return
+        updated = update_stock_count(rid, item_name, current_level)
+        if not updated:
+            # Item not found — offer to create it
+            await update.message.reply_text(
+                f"'{item_name}' not found in your stock list.\n"
+                f"Set a par level first: /stock set {item_name} <par_amount>"
+            )
+            return
+        # Fetch the item to check against par
+        items = get_stock_status(rid)
+        item = next((i for i in items if i["item_name"] == item_name.lower().strip()), None)
+        unit_str = f" {item['unit']}" if item and item["unit"] else ""
+        par = item["par_level"] if item else 0
+        if current_level < par:
+            deficit = par - current_level
+            await update.message.reply_text(
+                f"Stock updated: {item_name.title()} — {current_level:g}{unit_str}\n"
+                f"⚠️ BELOW PAR — need {deficit:g}{unit_str} more (par: {par:g}{unit_str})"
+            )
+        else:
+            surplus = current_level - par
+            await update.message.reply_text(
+                f"Stock updated: {item_name.title()} — {current_level:g}{unit_str} ✅\n"
+                f"Above par by {surplus:g}{unit_str} (par: {par:g}{unit_str})"
+            )
+
+    # ── /stock remove <item> ──────────────────────────────────────────────────
+    elif subcommand == "remove":
+        item_name = " ".join(args[1:]).strip()
+        if not item_name:
+            await update.message.reply_text("Usage: /stock remove chicken")
+            return
+        deleted = delete_stock_item(rid, item_name)
+        if deleted:
+            await update.message.reply_text(f"Removed '{item_name}' from stock list.")
+        else:
+            await update.message.reply_text(f"'{item_name}' not found in your stock list.")
+
+    # ── /stock low ────────────────────────────────────────────────────────────
+    elif subcommand == "low":
+        low_items = get_low_stock_items(rid)
+        if not low_items:
+            await update.message.reply_text(
+                "No items below par level. All stock looks good. ✅\n\n"
+                "Note: items without a count recorded will not appear here.\n"
+                "Log counts with: /stock count <item> <amount>"
+            )
+            return
+        lines = []
+        for item in low_items:
+            unit_str = f" {item['unit']}" if item["unit"] else ""
+            deficit = item["par_level"] - item["current_level"]
+            lines.append(
+                f"⚠️ {item['item_name'].title()}\n"
+                f"   Have: {item['current_level']:g}{unit_str}  |  "
+                f"Par: {item['par_level']:g}{unit_str}  |  "
+                f"Need: {deficit:g}{unit_str}"
+            )
+        await update.message.reply_text(
+            f"Low Stock — {restaurant['name']}\n"
+            f"{'─' * 36}\n" +
+            "\n".join(lines) +
+            f"\n{'─' * 36}\n"
+            f"{len(low_items)} item(s) below par level.\n"
+            "Order these before next service."
+        )
+
+    # ── /stock (status — show all) ────────────────────────────────────────────
+    else:
+        items = get_stock_status(rid)
+        if not items:
+            await update.message.reply_text(
+                "No stock items set up yet.\n\n"
+                "Start by setting par levels:\n"
+                "/stock set chicken 10 kg\n"
+                "/stock set milk 12 litres\n"
+                "/stock set burger buns 48\n\n"
+                "Then log counts:\n"
+                "/stock count chicken 3 kg"
+            )
+            return
+
+        ok_lines, low_lines, uncount_lines = [], [], []
+        for item in items:
+            unit_str = f" {item['unit']}" if item["unit"] else ""
+            par_str = f"{item['par_level']:g}{unit_str}"
+            if item["current_level"] is None:
+                uncount_lines.append(f"  ○ {item['item_name'].title():<25} par: {par_str}")
+            elif item["current_level"] < item["par_level"]:
+                deficit = item["par_level"] - item["current_level"]
+                low_lines.append(
+                    f"  ⚠️ {item['item_name'].title():<23} "
+                    f"{item['current_level']:g}{unit_str} / {par_str}  (need {deficit:g}{unit_str})"
+                )
+            else:
+                ok_lines.append(
+                    f"  ✅ {item['item_name'].title():<23} "
+                    f"{item['current_level']:g}{unit_str} / {par_str}"
+                )
+
+        sections = []
+        if low_lines:
+            sections.append("BELOW PAR — order now:\n" + "\n".join(low_lines))
+        if ok_lines:
+            sections.append("OK:\n" + "\n".join(ok_lines))
+        if uncount_lines:
+            sections.append("NOT YET COUNTED:\n" + "\n".join(uncount_lines))
+
+        last_count = next(
+            (i["last_count_date"] for i in items if i["last_count_date"]), None
+        )
+        count_note = f"Last count: {_fmt_date(last_count)}" if last_count else "No counts recorded yet"
+
+        await update.message.reply_text(
+            f"Stock Status — {restaurant['name']}\n"
+            f"{'─' * 36}\n" +
+            ("\n\n".join(sections)) +
+            f"\n{'─' * 36}\n"
+            f"{count_note}\n"
+            "Use /stock count <item> <amount> to update counts."
+        )
 
 
 async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3349,6 +3576,7 @@ def main():
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("teamstats", cmd_teamstats))
     app.add_handler(CommandHandler("eightysix", cmd_eightysix))
+    app.add_handler(CommandHandler("stock", cmd_stock))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("deletedata", cmd_deletedata))
 

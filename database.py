@@ -214,6 +214,25 @@ def init_db():
             )
         """)
 
+        # Stock par levels — one row per item per restaurant.
+        # par_level is the minimum quantity that should always be on hand.
+        # current_level is the last count recorded by staff.
+        # Items where current_level < par_level are flagged as low stock.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS stock_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                par_level REAL NOT NULL DEFAULT 0,
+                unit TEXT DEFAULT '',
+                current_level REAL,
+                last_count_date TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(restaurant_id, item_name),
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
         conn.commit()
     print("Database initialised.")
 
@@ -975,3 +994,78 @@ def delete_entries_older_than(restaurant_id: int, days: int) -> int:
         c.execute(f"DELETE FROM daily_entries WHERE id IN ({placeholders})", entry_ids)
         conn.commit()
         return len(entry_ids)
+
+
+# ── Stock par level tracking ──────────────────────────────────────────────────
+
+def set_stock_par(restaurant_id: int, item_name: str, par_level: float, unit: str = "") -> int:
+    """Create or update a stock par level for an item. Returns the row id."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO stock_items (restaurant_id, item_name, par_level, unit)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(restaurant_id, item_name)
+               DO UPDATE SET par_level = excluded.par_level,
+                             unit = CASE WHEN excluded.unit != '' THEN excluded.unit
+                                         ELSE unit END""",
+            (restaurant_id, item_name.lower().strip(), par_level, unit),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def update_stock_count(restaurant_id: int, item_name: str, current_level: float) -> bool:
+    """Record a stock count for an item. Item must already have a par level set.
+    Returns True if updated, False if item not found."""
+    with _db() as conn:
+        c = conn.cursor()
+        today = datetime.now().strftime("%Y-%m-%d")
+        c.execute(
+            """UPDATE stock_items
+               SET current_level = ?, last_count_date = ?
+               WHERE restaurant_id = ? AND item_name = ?""",
+            (current_level, today, restaurant_id, item_name.lower().strip()),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_stock_status(restaurant_id: int) -> list:
+    """Return all stock items for a restaurant, ordered by name."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM stock_items
+               WHERE restaurant_id = ?
+               ORDER BY item_name ASC""",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def get_low_stock_items(restaurant_id: int) -> list:
+    """Return items where current_level < par_level (and current_level has been set)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM stock_items
+               WHERE restaurant_id = ?
+                 AND current_level IS NOT NULL
+                 AND current_level < par_level
+               ORDER BY (par_level - current_level) DESC""",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def delete_stock_item(restaurant_id: int, item_name: str) -> bool:
+    """Remove a stock item and its par level. Returns True if deleted."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM stock_items WHERE restaurant_id = ? AND item_name = ?",
+            (restaurant_id, item_name.lower().strip()),
+        )
+        conn.commit()
+        return c.rowcount > 0
