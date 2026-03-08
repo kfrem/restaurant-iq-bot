@@ -480,6 +480,19 @@ def mark_invoice_paid(invoice_id: int) -> bool:
         return c.rowcount > 0
 
 
+def get_invoices_for_period(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """Return all invoices (paid and unpaid) within a date range, ordered by invoice date."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM invoices
+               WHERE restaurant_id = ? AND invoice_date BETWEEN ? AND ?
+               ORDER BY invoice_date ASC""",
+            (restaurant_id, start_date, end_date),
+        )
+        return c.fetchall()
+
+
 def get_invoices_due_soon(days_ahead: int = 3) -> list:
     """Return unpaid invoices across ALL restaurants that are due within days_ahead days.
     Used by the daily reminder scheduler."""

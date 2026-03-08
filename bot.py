@@ -65,6 +65,7 @@ from database import (
     get_entries_for_period,
     get_entries_with_staff,
     get_outstanding_invoices,
+    get_invoices_for_period,
     get_invoices_due_soon,
     mark_invoice_paid,
     get_financial_summary,
@@ -334,7 +335,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "DATA MANAGEMENT:\n"
         "  /rename NewName        — Rename your restaurant\n"
         "  /import [dates]: [description] — Import any historical period\n"
-        "  /export                — Export entries as CSV (for Excel/accountants)\n"
+        "  /export                — Export entries as CSV (Excel/accountants)\n"
+        "  /export xero           — Xero Bills import CSV (purchase invoices)\n"
+        "  /export sage           — Sage 50 purchase journal CSV\n"
+        "  /export payroll        — Labour cost sheet (BrightPay/Sage Payroll)\n"
         "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
@@ -2283,11 +2287,33 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Export CSV command ─────────────────────────────────────────────────────────
 
+def _fmt_date_uk(iso_date: str) -> str:
+    """Convert YYYY-MM-DD to DD/MM/YYYY for UK accounting software."""
+    if not iso_date:
+        return ""
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return iso_date
+
+
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /export           — export this week's entries as CSV
-    /export last month — export a specific period
-    Useful for importing into Excel, accounting software, or sharing with accountants.
+    /export [format] [period]
+
+    Formats:
+      (none)    — general entries log (Excel/accountant review)
+      xero      — Xero Bills import CSV (purchase invoices)
+      sage      — Sage 50 purchase journal CSV
+      payroll   — Labour cost entries CSV (wages/agency/contractor)
+
+    Examples:
+      /export                    — this week's entries
+      /export last month         — last month's entries
+      /export xero               — Xero bills for this month
+      /export xero last month    — Xero bills for last month
+      /export sage this month    — Sage purchase journal for this month
+      /export payroll last month — Labour costs for last month
     """
     import csv
     import io
@@ -2296,71 +2322,226 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
-    query = " ".join(context.args).strip() if context.args else "this week"
-    date_range = _parse_date_range(query)
+    # Detect optional format keyword as first argument
+    args = list(context.args) if context.args else []
+    fmt = "general"
+    FORMATS = {"xero", "sage", "payroll"}
+    if args and args[0].lower() in FORMATS:
+        fmt = args[0].lower()
+        args = args[1:]
+
+    period_query = " ".join(args).strip() if args else "this month"
+    date_range = _parse_date_range(period_query)
 
     if not date_range:
         await update.message.reply_text(
-            f"Couldn't understand period \"{query}\".\n"
+            f"Couldn't understand period \"{period_query}\".\n"
             "Try: this week, this month, last month, March 2026"
         )
         return
 
     start_date, end_date = date_range
-    entries = get_entries_with_staff(restaurant["id"], start_date, end_date)
-
-    if not entries:
-        await update.message.reply_text(
-            f"No entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}."
-        )
-        return
-
-    # Build CSV in memory
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue", "Covers"])
-
-    for e in entries:
-        summary = ""
-        urgency = ""
-        revenue = ""
-        covers = ""
-        if e["structured_data"]:
-            try:
-                a = json.loads(e["structured_data"])
-                summary = a.get("summary", "")
-                urgency = a.get("urgency", "")
-                revenue = a.get("revenue") or ""
-                covers = a.get("covers") or ""
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        writer.writerow([
-            e["entry_date"],
-            e["entry_time"],
-            e["entry_type"],
-            e["staff_name"] or "",
-            e["category"] or "",
-            summary,
-            (e["raw_text"] or "")[:300],
-            urgency,
-            revenue,
-            covers,
-        ])
-
-    csv_bytes = output.getvalue().encode("utf-8-sig")  # utf-8-sig for Excel compatibility
-    period_label = f"{start_date}_to_{end_date}"
     safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
-    filename = f"{safe_name}_{period_label}.csv"
+    period_label = f"{start_date}_to_{end_date}"
+    output = io.StringIO()
+
+    # ── XERO BILLS IMPORT ──────────────────────────────────────────────────────
+    if fmt == "xero":
+        invoices = get_invoices_for_period(restaurant["id"], start_date, end_date)
+        if not invoices:
+            await update.message.reply_text(
+                f"No invoices found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Invoices are captured when you send a photo of a supplier invoice."
+            )
+            return
+
+        writer = csv.writer(output)
+        # Xero UK Bills import format (required columns marked *)
+        writer.writerow([
+            "*ContactName", "*InvoiceNumber", "*InvoiceDate", "*DueDate",
+            "Description", "Quantity", "*UnitAmount", "Discount",
+            "*AccountCode", "*TaxType", "TaxAmount", "Currency", "BrandingTheme",
+        ])
+        for idx, inv in enumerate(invoices, start=1):
+            net = round((inv["total_amount"] or 0) - (inv["vat"] or 0), 2)
+            vat = round(inv["vat"] or 0, 2)
+            tax_type = "20% (VAT on Expenses)" if vat > 0 else "No VAT"
+            inv_number = f"INV-{inv['id']:04d}"
+            inv_date = _fmt_date_uk(inv["invoice_date"] or start_date)
+            due_date = _fmt_date_uk(inv["due_date"] or end_date)
+            writer.writerow([
+                inv["supplier_name"] or "Unknown Supplier",
+                inv_number,
+                inv_date,
+                due_date,
+                inv["description"] or f"Purchase from {inv['supplier_name'] or 'supplier'}",
+                1,                  # Quantity
+                net,                # UnitAmount (net of VAT)
+                "",                 # Discount
+                "429",              # AccountCode — Xero default "General Expenses" (change to 300 for food purchases)
+                tax_type,
+                vat if vat > 0 else "",
+                "GBP",
+                "",
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_XERO_bills_{period_label}.csv"
+        caption = (
+            f"Xero Bills Import — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(invoices)} invoice(s)\n\n"
+            "How to import: Xero > Accounts Payable > Import\n"
+            "Tip: Change AccountCode 429 to 300 for food/drink purchases."
+        )
+
+    # ── SAGE 50 PURCHASE JOURNAL ───────────────────────────────────────────────
+    elif fmt == "sage":
+        invoices = get_invoices_for_period(restaurant["id"], start_date, end_date)
+        if not invoices:
+            await update.message.reply_text(
+                f"No invoices found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Invoices are captured when you send a photo of a supplier invoice."
+            )
+            return
+
+        writer = csv.writer(output)
+        # Sage 50 Accounts purchase transaction import format
+        writer.writerow([
+            "Type", "Account", "N/C", "Dept", "Date", "Ref",
+            "Details", "Net Amount", "T/C", "VAT Amount",
+        ])
+        for inv in invoices:
+            net = round((inv["total_amount"] or 0) - (inv["vat"] or 0), 2)
+            vat = round(inv["vat"] or 0, 2)
+            tax_code = "T1" if vat > 0 else "T0"   # T1 = 20% standard, T0 = zero rated
+            # Sage supplier account code: first 8 chars of supplier name, uppercase
+            supplier_code = (inv["supplier_name"] or "UNKNOWN").upper().replace(" ", "")[:8]
+            inv_date = _fmt_date_uk(inv["invoice_date"] or start_date)
+            ref = f"RIQ{inv['id']:04d}"
+            writer.writerow([
+                "PI",               # Purchase Invoice
+                supplier_code,
+                "5000",             # Nominal Code — Purchases (change to 5001 for food, 5002 for drinks, etc.)
+                "0",                # Department
+                inv_date,
+                ref,
+                inv["description"] or f"Purchase from {inv['supplier_name'] or 'supplier'}",
+                f"{net:.2f}",
+                tax_code,
+                f"{vat:.2f}",
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_SAGE_purchases_{period_label}.csv"
+        caption = (
+            f"Sage 50 Purchase Journal — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(invoices)} invoice(s)\n\n"
+            "How to import: Sage 50 > File > Import > Audit Trail Transactions\n"
+            "Tip: Nominal Code 5000 = Purchases. Split into 5001 (food) / 5002 (drinks) if needed."
+        )
+
+    # ── PAYROLL / LABOUR CSV ───────────────────────────────────────────────────
+    elif fmt == "payroll":
+        labour = get_labour_for_period(restaurant["id"], start_date, end_date)
+        if not labour:
+            await update.message.reply_text(
+                f"No labour entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Log labour costs with: /labour £450 wages Monday"
+            )
+            return
+
+        writer = csv.writer(output)
+        writer.writerow([
+            "Date", "Reference", "Description", "Shift", "Hours", "Amount (£)",
+            "Weekly Total", "Notes",
+        ])
+        # Group by week for running totals
+        weekly = {}
+        for l in labour:
+            wk = l["labour_date"][:7]  # YYYY-MM key
+            weekly[wk] = weekly.get(wk, 0) + (l["amount"] or 0)
+
+        week_seen = {}
+        for l in labour:
+            wk = l["labour_date"][:7]
+            if wk not in week_seen:
+                week_seen[wk] = 0
+            week_seen[wk] += l["amount"] or 0
+            ref = f"LAB{l['id']:04d}"
+            writer.writerow([
+                _fmt_date_uk(l["labour_date"]),
+                ref,
+                l["description"] or "Labour cost",
+                l["shift"] or "",
+                f"{l['hours']:.1f}" if l["hours"] else "",
+                f"{l['amount']:.2f}",
+                f"{week_seen[wk]:.2f}",
+                "",
+            ])
+
+        # Summary row
+        total = sum(l["amount"] or 0 for l in labour)
+        writer.writerow([])
+        writer.writerow(["TOTAL", "", "", "", "", f"{total:.2f}", "", ""])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_PAYROLL_{period_label}.csv"
+        caption = (
+            f"Labour Cost Export — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(labour)} entries | Total: £{total:.2f}\n\n"
+            "Compatible with BrightPay, Sage Payroll, and Excel payroll templates."
+        )
+
+    # ── GENERAL ENTRIES (default) ──────────────────────────────────────────────
+    else:
+        entries = get_entries_with_staff(restaurant["id"], start_date, end_date)
+        if not entries:
+            await update.message.reply_text(
+                f"No entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}."
+            )
+            return
+
+        writer = csv.writer(output)
+        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue (£)", "Covers"])
+
+        for e in entries:
+            summary = urgency = revenue = covers = ""
+            if e["structured_data"]:
+                try:
+                    a = json.loads(e["structured_data"])
+                    summary = a.get("summary", "")
+                    urgency = a.get("urgency", "")
+                    revenue = a.get("revenue") or ""
+                    covers = a.get("covers") or ""
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            writer.writerow([
+                e["entry_date"], e["entry_time"], e["entry_type"],
+                e["staff_name"] or "", e["category"] or "",
+                summary, (e["raw_text"] or "")[:300],
+                urgency, revenue, covers,
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_{period_label}.csv"
+        caption = (
+            f"Data export: {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(entries)} entries\n\n"
+            "Also try:\n"
+            "/export xero — Xero Bills import\n"
+            "/export sage — Sage 50 purchase journal\n"
+            "/export payroll — Labour cost sheet"
+        )
 
     await update.message.reply_document(
         document=csv_bytes,
         filename=filename,
-        caption=(
-            f"Data export: {restaurant['name']}\n"
-            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
-            f"{len(entries)} entries"
-        ),
+        caption=caption,
     )
 
 
