@@ -51,6 +51,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID
+from dashboard import start_dashboard_server
 from database import (
     init_db,
     register_restaurant,
@@ -108,6 +109,7 @@ from database import (
     delete_rota_shift,
     copy_rota_week,
     clear_rota_week,
+    get_or_create_dashboard_token,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -336,6 +338,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /rota add Mon John 9am-5pm — Add a shift to the rota\n"
         "  /rota copy             — Copy last week's rota to this week\n"
         "  /rota next             — View next week's rota\n"
+        "  /dashboard             — Get your private live web dashboard link\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
@@ -1530,6 +1533,43 @@ async def cmd_rota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         week_start, week_end = _rota_week_bounds(today)
         shifts = get_rota_for_week(rid, week_start, week_end)
         await update.message.reply_text(_render_rota(shifts, week_start, week_end, restaurant["name"]))
+
+
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /dashboard — get a private link to your restaurant's live web dashboard.
+    The link shows rota, stock, invoices, financials and recent activity.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    token = get_or_create_dashboard_token(restaurant["id"])
+
+    # Build the base URL from RAILWAY_PUBLIC_DOMAIN env var if set, else generic instructions
+    base_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if base_url:
+        url = f"https://{base_url}/dashboard/{token}"
+        await update.message.reply_text(
+            f"Your live dashboard:\n{url}\n\n"
+            "Bookmark it — it shows:\n"
+            "  • This week's rota\n"
+            "  • Stock levels (red = low)\n"
+            "  • Outstanding invoices\n"
+            "  • Month-to-date P&L\n"
+            "  • Recent activity & 86 list\n\n"
+            "The page auto-refreshes every 60 seconds.\n"
+            "Keep this link private — anyone with it can view your data."
+        )
+    else:
+        await update.message.reply_text(
+            f"Dashboard token: {token}\n\n"
+            "Your dashboard is available at:\n"
+            "  http://<your-server>/dashboard/" + token + "\n\n"
+            "On Railway: set RAILWAY_PUBLIC_DOMAIN in Variables for a clean URL.\n\n"
+            "The dashboard shows rota, stock, invoices, P&L and recent activity.\n"
+            "Keep this link private — anyone with it can view your data."
+        )
 
 
 async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3858,6 +3898,7 @@ def main():
     app.add_handler(CommandHandler("eightysix", cmd_eightysix))
     app.add_handler(CommandHandler("stock", cmd_stock))
     app.add_handler(CommandHandler("rota", cmd_rota))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("deletedata", cmd_deletedata))
 
@@ -3880,6 +3921,10 @@ def main():
         days=(0,),  # 0 = Monday
         name="weekly_reports",
     )
+
+    # Start web dashboard server on $PORT (Railway) or 8080 (local)
+    _port = int(os.environ.get("PORT", 8080))
+    start_dashboard_server(_port)
 
     logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)

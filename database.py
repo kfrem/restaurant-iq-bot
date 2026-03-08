@@ -1179,3 +1179,39 @@ def clear_rota_week(restaurant_id: int, week_start: str, week_end: str) -> int:
         )
         conn.commit()
         return c.rowcount
+
+
+# ── Dashboard token ────────────────────────────────────────────────────────────
+
+def get_or_create_dashboard_token(restaurant_id: int) -> str:
+    """Return the dashboard auth token for a restaurant, creating one if needed."""
+    import uuid as _uuid
+    with _db() as conn:
+        try:
+            conn.execute("ALTER TABLE restaurants ADD COLUMN dashboard_token TEXT")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+        c = conn.cursor()
+        c.execute("SELECT dashboard_token FROM restaurants WHERE id = ?", (restaurant_id,))
+        row = c.fetchone()
+        if row and row["dashboard_token"]:
+            return row["dashboard_token"]
+        token = _uuid.uuid4().hex
+        c.execute(
+            "UPDATE restaurants SET dashboard_token = ? WHERE id = ?",
+            (token, restaurant_id),
+        )
+        conn.commit()
+        return token
+
+
+def get_restaurant_by_dashboard_token(token: str):
+    """Return the restaurant row matching a dashboard token, or None."""
+    with _db() as conn:
+        c = conn.cursor()
+        try:
+            c.execute("SELECT * FROM restaurants WHERE dashboard_token = ?", (token,))
+            return c.fetchone()
+        except Exception:
+            return None
