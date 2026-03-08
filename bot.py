@@ -10,6 +10,7 @@ Handles:
   - /weeklyreport       — generate and send the weekly intelligence briefing
   - /recall [date]      — recall what was recorded on a specific date or period
   - /financials         — P&L and cashflow summary for any period
+  - /groupreport        — consolidated P&L across all registered sites (multi-site owners)
   - /outstanding        — list all unpaid invoices with due dates
   - /markpaid [id]      — mark an invoice as paid
   - /demo               — load a realistic week of demo data for client presentations
@@ -316,6 +317,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /history               — Browse past weekly reports\n"
         "  /today                 — Everything logged today\n"
         "  /financials            — Revenue, costs, labour and net margin\n"
+        "  /groupreport           — Consolidated P&L across ALL your sites\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
@@ -1020,6 +1022,123 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{labour_lines}\n\n"
         f"Note: revenue = reported takings. Costs = photographed invoices.\n"
         f"Labour = entries via /labour. Use /labour £X [description] to record wages."
+    )
+
+
+async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /groupreport [period]
+
+    Consolidated P&L across ALL restaurants registered to this bot instance.
+    Useful for franchise/multi-site owners running their own bot.
+
+    Examples:
+      /groupreport              — this month
+      /groupreport last month   — previous calendar month
+      /groupreport March 2026   — specific month
+    """
+    # Must be in a registered group or the support chat — give a helpful message otherwise
+    chat_id = str(update.effective_chat.id)
+    calling_restaurant = get_restaurant_by_group(chat_id)
+
+    query = " ".join(context.args).strip() if context.args else "this month"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this month, last month, March 2026"
+        )
+        return
+
+    start_date, end_date = date_range
+    period_label = (
+        _fmt_date(start_date) if start_date == end_date
+        else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+    )
+
+    all_restaurants = get_all_restaurants()
+    if not all_restaurants:
+        await update.message.reply_text("No restaurants registered on this bot yet.")
+        return
+
+    # Gather financials for every site
+    sites = []
+    for r in all_restaurants:
+        fin = get_financial_summary(r["id"], start_date, end_date)
+        sites.append({
+            "name": r["name"],
+            "revenue": fin["revenue_total"],
+            "costs": fin["cost_total"],
+            "labour": fin["labour_total"],
+            "profit": fin["gross_profit"],
+            "food_margin": fin["food_margin_pct"],
+            "net_margin": fin["net_margin_pct"],
+        })
+
+    # Filter to sites that have any data
+    active_sites = [s for s in sites if s["revenue"] > 0 or s["costs"] > 0 or s["labour"] > 0]
+
+    if not active_sites:
+        await update.message.reply_text(
+            f"No financial data found for {period_label} across any of the "
+            f"{len(all_restaurants)} registered restaurant(s).\n\n"
+            "Revenue is captured from voice/text updates mentioning takings.\n"
+            "Costs are captured when invoice photos are sent.\n"
+            "Labour is recorded via /labour."
+        )
+        return
+
+    # Group totals
+    total_revenue = sum(s["revenue"] for s in active_sites)
+    total_costs = sum(s["costs"] for s in active_sites)
+    total_labour = sum(s["labour"] for s in active_sites)
+    total_profit = sum(s["profit"] for s in active_sites)
+    group_net_margin = round(total_profit / total_revenue * 100, 1) if total_revenue else 0.0
+    group_food_margin = (
+        round((total_revenue - total_costs) / total_revenue * 100, 1) if total_revenue else 0.0
+    )
+
+    # Per-site breakdown lines
+    divider = "─" * 44
+    site_lines = []
+    for s in active_sites:
+        margin_flag = ""
+        if s["net_margin"] < 5:
+            margin_flag = " ⚠️"
+        elif s["net_margin"] >= 15:
+            margin_flag = " ✅"
+        site_lines.append(
+            f"\n{s['name']}\n"
+            f"  Revenue:  £{s['revenue']:>9,.2f}  |  Costs: £{s['costs']:>8,.2f}\n"
+            f"  Labour:   £{s['labour']:>9,.2f}  |  Profit: £{s['profit']:>7,.2f}\n"
+            f"  Food GP: {s['food_margin']:>5.1f}%   |  Net: {s['net_margin']:>5.1f}%{margin_flag}"
+        )
+
+    context_note = (
+        f"\n\n(Showing {len(active_sites)} of {len(all_restaurants)} site(s) — "
+        f"{len(all_restaurants) - len(active_sites)} have no data this period)"
+        if len(active_sites) < len(all_restaurants) else ""
+    )
+
+    await update.message.reply_text(
+        f"Group Report — All Sites\n"
+        f"Period: {period_label}\n"
+        f"{divider}\n"
+        f"GROUP TOTALS\n"
+        f"  Revenue:         £{total_revenue:>10,.2f}\n"
+        f"  Invoiced costs:  £{total_costs:>10,.2f}\n"
+        f"  Labour:          £{total_labour:>10,.2f}\n"
+        f"  {divider[:30]}\n"
+        f"  Net profit:      £{total_profit:>10,.2f}\n"
+        f"  Food GP margin:  {group_food_margin:>9.1f}%\n"
+        f"  Net margin:      {group_net_margin:>9.1f}%\n"
+        f"{divider}\n"
+        f"PER SITE BREAKDOWN"
+        + "".join(site_lines)
+        + f"\n{divider}"
+        + context_note
+        + "\n\nUse /export xero or /export sage per site for accounting imports."
     )
 
 
@@ -3197,6 +3316,7 @@ def main():
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
     app.add_handler(CommandHandler("recall", cmd_recall))
     app.add_handler(CommandHandler("financials", cmd_financials))
+    app.add_handler(CommandHandler("groupreport", cmd_groupreport))
     app.add_handler(CommandHandler("outstanding", cmd_outstanding))
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
     app.add_handler(CommandHandler("version", cmd_version))
