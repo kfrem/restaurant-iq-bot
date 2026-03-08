@@ -1069,3 +1069,113 @@ def delete_stock_item(restaurant_id: int, item_name: str) -> bool:
         )
         conn.commit()
         return c.rowcount > 0
+
+
+# ── Staff rota / shift scheduling ─────────────────────────────────────────────
+
+def _ensure_rota_table(conn):
+    """Create rota_shifts table if it doesn't exist yet (lazy migration)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rota_shifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            shift_date TEXT NOT NULL,
+            staff_name TEXT NOT NULL,
+            start_time TEXT DEFAULT '',
+            end_time TEXT DEFAULT '',
+            role TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+        )
+    """)
+
+
+def add_rota_shift(restaurant_id: int, shift_date: str, staff_name: str,
+                   start_time: str = "", end_time: str = "",
+                   role: str = "", notes: str = "") -> int:
+    """Add a single shift to the rota. Returns the new row id."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO rota_shifts
+               (restaurant_id, shift_date, staff_name, start_time, end_time, role, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, shift_date, staff_name.strip(),
+             start_time, end_time, role, notes),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_rota_for_week(restaurant_id: int, week_start: str, week_end: str) -> list:
+    """Return all shifts for a week, ordered by date then start_time."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM rota_shifts
+               WHERE restaurant_id = ? AND shift_date BETWEEN ? AND ?
+               ORDER BY shift_date ASC, start_time ASC, staff_name ASC""",
+            (restaurant_id, week_start, week_end),
+        )
+        return c.fetchall()
+
+
+def delete_rota_shift(shift_id: int, restaurant_id: int) -> bool:
+    """Delete a shift by id. Requires restaurant_id for safety. Returns True if deleted."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM rota_shifts WHERE id = ? AND restaurant_id = ?",
+            (shift_id, restaurant_id),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def copy_rota_week(restaurant_id: int, from_start: str, from_end: str,
+                   to_start: str) -> int:
+    """Copy all shifts from one week to a target week.
+    to_start is the Monday of the destination week.
+    Returns count of shifts copied."""
+    source_shifts = get_rota_for_week(restaurant_id, from_start, from_end)
+    if not source_shifts:
+        return 0
+    from datetime import datetime as _dt, timedelta as _td
+    from_monday = _dt.strptime(from_start, "%Y-%m-%d").date()
+    to_monday = _dt.strptime(to_start, "%Y-%m-%d").date()
+    offset = to_monday - from_monday
+    copied = 0
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        for shift in source_shifts:
+            original = _dt.strptime(shift["shift_date"], "%Y-%m-%d").date()
+            new_date = (original + offset).strftime("%Y-%m-%d")
+            c.execute(
+                """INSERT INTO rota_shifts
+                   (restaurant_id, shift_date, staff_name, start_time, end_time, role, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (restaurant_id, new_date, shift["staff_name"],
+                 shift["start_time"], shift["end_time"],
+                 shift["role"], shift["notes"]),
+            )
+            copied += 1
+        conn.commit()
+    return copied
+
+
+def clear_rota_week(restaurant_id: int, week_start: str, week_end: str) -> int:
+    """Delete all shifts for a week. Returns count deleted."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM rota_shifts WHERE restaurant_id = ? AND shift_date BETWEEN ? AND ?",
+            (restaurant_id, week_start, week_end),
+        )
+        conn.commit()
+        return c.rowcount

@@ -103,6 +103,11 @@ from database import (
     get_stock_status,
     get_low_stock_items,
     delete_stock_item,
+    add_rota_shift,
+    get_rota_for_week,
+    delete_rota_shift,
+    copy_rota_week,
+    clear_rota_week,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -327,6 +332,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /stock low             — Only items below par level\n"
         "  /stock set item 10 kg  — Set par level for an item\n"
         "  /stock count item 3 kg — Log current stock count\n"
+        "  /rota                  — Show this week's staff rota\n"
+        "  /rota add Mon John 9am-5pm — Add a shift to the rota\n"
+        "  /rota copy             — Copy last week's rota to this week\n"
+        "  /rota next             — View next week's rota\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
@@ -1250,6 +1259,277 @@ async def cmd_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{count_note}\n"
             "Use /stock count <item> <amount> to update counts."
         )
+
+
+def _rota_week_bounds(ref: date, offset_weeks: int = 0):
+    """Return (monday, sunday) as YYYY-MM-DD for the week containing ref + offset_weeks."""
+    monday = ref - timedelta(days=ref.weekday()) + timedelta(weeks=offset_weeks)
+    sunday = monday + timedelta(days=6)
+    return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
+
+
+def _parse_rota_day(token: str, ref: date) -> str | None:
+    """Convert a day token ('Monday', 'Mon', 'Tue', YYYY-MM-DD, DD/MM/YYYY) to YYYY-MM-DD.
+    Day names resolve to the current week (Mon-Sun)."""
+    token = token.strip().lower()
+    monday = ref - timedelta(days=ref.weekday())
+    day_map = {
+        "monday": 0, "mon": 0,
+        "tuesday": 1, "tue": 1, "tues": 1,
+        "wednesday": 2, "wed": 2,
+        "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+        "friday": 4, "fri": 4,
+        "saturday": 5, "sat": 5,
+        "sunday": 6, "sun": 6,
+        "today": ref.weekday(),
+        "tomorrow": (ref + timedelta(days=1)).weekday(),
+    }
+    if token == "today":
+        return ref.strftime("%Y-%m-%d")
+    if token == "tomorrow":
+        return (ref + timedelta(days=1)).strftime("%Y-%m-%d")
+    if token in day_map:
+        return (monday + timedelta(days=day_map[token])).strftime("%Y-%m-%d")
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(token, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_shift_time(tok: str):
+    """Parse a single time token like '9am', '17:00', '9', '9:30pm' → 'HH:MM' or None."""
+    tok = tok.strip().lower()
+    m = re.match(r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$', tok)
+    if not m:
+        return None
+    h, mins, period = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if period == "pm" and h != 12:
+        h += 12
+    elif period == "am" and h == 12:
+        h = 0
+    elif period is None and 1 <= h <= 7:
+        h += 12   # ambiguous bare numbers: treat 1-7 as pm (lunch/evening shifts)
+    return f"{h:02d}:{mins:02d}"
+
+
+def _parse_time_range(tok: str):
+    """Parse '9am-5pm', '09:00-17:00', '9-17' → ('09:00', '17:00'). Returns (start, end) or (start, None)."""
+    if "-" in tok:
+        parts = tok.split("-", 1)
+        return _parse_shift_time(parts[0]), _parse_shift_time(parts[1])
+    return _parse_shift_time(tok), None
+
+
+def _fmt_shift_time(t: str) -> str:
+    """Format stored HH:MM for display. Strips leading zero from hour."""
+    if not t:
+        return ""
+    try:
+        h, m = t.split(":")
+        return f"{int(h)}:{m}"
+    except ValueError:
+        return t
+
+
+def _rota_week_label(week_start: str, week_end: str) -> str:
+    """e.g. 'Mon 9 Mar – Sun 15 Mar 2026'"""
+    try:
+        s = datetime.strptime(week_start, "%Y-%m-%d")
+        e = datetime.strptime(week_end, "%Y-%m-%d")
+        return f"Mon {s.day} {s.strftime('%b')} – Sun {e.day} {e.strftime('%b %Y')}"
+    except ValueError:
+        return f"{week_start} to {week_end}"
+
+
+def _render_rota(shifts: list, week_start: str, week_end: str, restaurant_name: str) -> str:
+    """Build the rota display string for a week."""
+    DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    # Index shifts by date
+    by_date: dict[str, list] = {}
+    for s in shifts:
+        by_date.setdefault(s["shift_date"], []).append(s)
+
+    # Walk every day of the week
+    lines = [
+        f"Rota — {restaurant_name}",
+        f"Week: {_rota_week_label(week_start, week_end)}",
+        "─" * 40,
+    ]
+    monday = datetime.strptime(week_start, "%Y-%m-%d")
+    has_any = False
+    for i in range(7):
+        day_date = (monday + timedelta(days=i)).strftime("%Y-%m-%d")
+        day_display = (monday + timedelta(days=i)).strftime(f"{DAY_NAMES[i]} %-d %b")
+        day_shifts = by_date.get(day_date, [])
+        if day_shifts:
+            has_any = True
+            lines.append(f"\n{day_display}")
+            for s in day_shifts:
+                t_start = _fmt_shift_time(s["start_time"])
+                t_end = _fmt_shift_time(s["end_time"])
+                time_str = f"{t_start}–{t_end}" if t_end else (t_start or "—")
+                role_str = f"  ({s['role']})" if s["role"] else ""
+                lines.append(f"  {s['staff_name']:<20} {time_str:<13}  [#{s['id']}]{role_str}")
+
+    if not has_any:
+        lines.append("\n(No shifts added yet)")
+
+    lines.append("\n" + "─" * 40)
+    lines.append(f"{len(shifts)} shift(s) total")
+    lines.append("Add:    /rota add Monday Name 9am-5pm")
+    lines.append("Remove: /rota remove <#id>")
+    lines.append("Copy last week: /rota copy")
+    return "\n".join(lines)
+
+
+async def cmd_rota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rota                           — show this week's rota
+    /rota next                      — show next week's rota
+    /rota add <day> <name> <times>  — add a shift
+    /rota remove <id>               — remove a shift by ID
+    /rota copy                      — copy last week's rota to this week
+    /rota clear                     — clear all shifts this week (asks confirmation)
+    /rota clear confirm             — actually clear this week
+
+    Examples:
+      /rota add Monday John 9am-5pm
+      /rota add Tuesday Sophie 12:00-20:00
+      /rota add Wed Marcus 8-4
+      /rota remove 42
+      /rota next
+      /rota copy
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    args = list(context.args) if context.args else []
+    rid = restaurant["id"]
+    today = date.today()
+    sub = args[0].lower() if args else "show"
+
+    # ── /rota add <day> <name> <time-range> ──────────────────────────────────
+    if sub == "add":
+        if len(args) < 4:
+            await update.message.reply_text(
+                "Usage: /rota add <day> <name> <times>\n\n"
+                "Examples:\n"
+                "  /rota add Monday John 9am-5pm\n"
+                "  /rota add Tuesday Sophie 12:00-20:00\n"
+                "  /rota add Wed Marcus 8-16\n\n"
+                "Days: Monday Mon Tue Wed Thu Fri Sat Sun today tomorrow"
+            )
+            return
+
+        day_token = args[1]
+        shift_date = _parse_rota_day(day_token, today)
+        if not shift_date:
+            await update.message.reply_text(
+                f"Couldn't understand day '{day_token}'.\n"
+                "Use: Monday, Mon, Tue, Wed, Thu, Fri, Sat, Sun, today, tomorrow"
+            )
+            return
+
+        # Last arg is time range, everything between is the name
+        time_token = args[-1]
+        start_time, end_time = _parse_time_range(time_token)
+        if start_time is None:
+            await update.message.reply_text(
+                f"Couldn't understand time '{time_token}'.\n"
+                "Try: 9am-5pm  or  09:00-17:00  or  9-17"
+            )
+            return
+
+        staff_name = " ".join(args[2:-1]).strip()
+        if not staff_name:
+            await update.message.reply_text(
+                "Please include a name: /rota add Monday John 9am-5pm"
+            )
+            return
+
+        shift_id = add_rota_shift(rid, shift_date, staff_name, start_time, end_time or "")
+        day_fmt = datetime.strptime(shift_date, "%Y-%m-%d").strftime("%-d %b (%A)")
+        t_start = _fmt_shift_time(start_time)
+        t_end = _fmt_shift_time(end_time) if end_time else ""
+        time_display = f"{t_start}–{t_end}" if t_end else t_start
+        await update.message.reply_text(
+            f"Shift added ✅\n"
+            f"{staff_name} — {day_fmt} — {time_display}  [#{shift_id}]\n\n"
+            "View rota: /rota\n"
+            "Remove: /rota remove " + str(shift_id)
+        )
+
+    # ── /rota remove <id> ────────────────────────────────────────────────────
+    elif sub == "remove":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /rota remove <id>  (ID shown in [#..] on the rota)")
+            return
+        try:
+            shift_id = int(args[1].lstrip("#"))
+        except ValueError:
+            await update.message.reply_text(f"'{args[1]}' is not a valid shift ID.")
+            return
+        deleted = delete_rota_shift(shift_id, rid)
+        if deleted:
+            await update.message.reply_text(f"Shift #{shift_id} removed.")
+        else:
+            await update.message.reply_text(
+                f"Shift #{shift_id} not found (may already be deleted or belong to another group)."
+            )
+
+    # ── /rota copy ───────────────────────────────────────────────────────────
+    elif sub == "copy":
+        last_start, last_end = _rota_week_bounds(today, offset_weeks=-1)
+        this_start, this_end = _rota_week_bounds(today)
+        # Check destination isn't already populated
+        existing = get_rota_for_week(rid, this_start, this_end)
+        if existing:
+            await update.message.reply_text(
+                f"This week already has {len(existing)} shift(s).\n"
+                "Clear this week first with /rota clear confirm, then /rota copy."
+            )
+            return
+        copied = copy_rota_week(rid, last_start, last_end, this_start)
+        if copied == 0:
+            await update.message.reply_text(
+                "Last week had no shifts to copy.\n"
+                "Add shifts with: /rota add Monday Name 9am-5pm"
+            )
+            return
+        await update.message.reply_text(
+            f"Copied {copied} shift(s) from last week to this week. ✅\n\n"
+            "View: /rota\n"
+            "Remove individual shifts with /rota remove <id>"
+        )
+
+    # ── /rota clear [confirm] ─────────────────────────────────────────────────
+    elif sub == "clear":
+        this_start, this_end = _rota_week_bounds(today)
+        confirmed = len(args) > 1 and args[1].lower() == "confirm"
+        if not confirmed:
+            existing = get_rota_for_week(rid, this_start, this_end)
+            await update.message.reply_text(
+                f"This will delete all {len(existing)} shift(s) for this week.\n\n"
+                "To confirm: /rota clear confirm"
+            )
+            return
+        deleted = clear_rota_week(rid, this_start, this_end)
+        await update.message.reply_text(f"Cleared {deleted} shift(s) from this week.")
+
+    # ── /rota next ────────────────────────────────────────────────────────────
+    elif sub == "next":
+        week_start, week_end = _rota_week_bounds(today, offset_weeks=1)
+        shifts = get_rota_for_week(rid, week_start, week_end)
+        await update.message.reply_text(_render_rota(shifts, week_start, week_end, restaurant["name"]))
+
+    # ── /rota (show this week) ────────────────────────────────────────────────
+    else:
+        week_start, week_end = _rota_week_bounds(today)
+        shifts = get_rota_for_week(rid, week_start, week_end)
+        await update.message.reply_text(_render_rota(shifts, week_start, week_end, restaurant["name"]))
 
 
 async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3577,6 +3857,7 @@ def main():
     app.add_handler(CommandHandler("teamstats", cmd_teamstats))
     app.add_handler(CommandHandler("eightysix", cmd_eightysix))
     app.add_handler(CommandHandler("stock", cmd_stock))
+    app.add_handler(CommandHandler("rota", cmd_rota))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("deletedata", cmd_deletedata))
 
