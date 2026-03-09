@@ -54,6 +54,10 @@ def init_db():
             ("website", "TEXT"), ("company_number", "TEXT"), ("vat_number", "TEXT"),
             ("cuisine_type", "TEXT"), ("num_covers", "INTEGER"),
             ("num_branches", "INTEGER"), ("profile_complete", "INTEGER DEFAULT 0"),
+            # TradeFlow: multi-currency support
+            ("currency_code", "TEXT DEFAULT 'GBP'"),
+            ("currency_symbol", "TEXT DEFAULT '£'"),
+            ("industry", "TEXT DEFAULT 'restaurant'"),
         ]
         for col, col_type in _profile_cols:
             try:
@@ -290,6 +294,55 @@ def get_restaurant_by_group(group_id: str):
         c = conn.cursor()
         c.execute("SELECT * FROM restaurants WHERE telegram_group_id = ?", (str(group_id),))
         return c.fetchone()
+
+
+# ── TradeFlow: Multi-currency support ────────────────────────────────────────
+
+# Supported currencies: code → (symbol, display_name)
+SUPPORTED_CURRENCIES = {
+    "GBP": ("£",    "British Pound"),
+    "USD": ("$",    "US Dollar"),
+    "EUR": ("€",    "Euro"),
+    "NGN": ("₦",   "Nigerian Naira"),
+    "KES": ("KSh", "Kenyan Shilling"),
+    "ZAR": ("R",   "South African Rand"),
+    "GHS": ("GH₵", "Ghanaian Cedi"),
+    "UGX": ("USh", "Ugandan Shilling"),
+    "TZS": ("TSh", "Tanzanian Shilling"),
+    "XOF": ("CFA", "West African CFA Franc"),
+}
+
+
+def get_restaurant_currency(group_id: str) -> tuple[str, str]:
+    """Return (currency_code, currency_symbol) for the given group.
+    Defaults to GBP / £ if not set or if the restaurant is not found."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT currency_code, currency_symbol FROM restaurants WHERE telegram_group_id = ?",
+            (str(group_id),),
+        )
+        row = c.fetchone()
+    if row and row["currency_code"]:
+        return row["currency_code"], row["currency_symbol"] or "£"
+    return "GBP", "£"
+
+
+def set_restaurant_currency(group_id: str, currency_code: str) -> tuple[str, str]:
+    """Set the currency for a restaurant. Returns (code, symbol).
+    Raises ValueError if the currency code is not supported."""
+    code = currency_code.upper()
+    if code not in SUPPORTED_CURRENCIES:
+        raise ValueError(f"Unsupported currency: {code}")
+    symbol, _ = SUPPORTED_CURRENCIES[code]
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE restaurants SET currency_code = ?, currency_symbol = ? WHERE telegram_group_id = ?",
+            (code, symbol, str(group_id)),
+        )
+        conn.commit()
+    return code, symbol
 
 
 def register_staff(restaurant_id: int, telegram_user_id: str, name: str, role: str = "staff"):

@@ -133,24 +133,27 @@ Tips: set tips_detected=true only if the document is a tips/tronc distribution s
 
 
 def _report_prompt(entries_summary: list, restaurant_name: str,
-                   financials: dict | None = None) -> str:
+                   financials: dict | None = None,
+                   currency_symbol: str = "£") -> str:
+    cs = currency_symbol
     fin_block = ""
     if financials and financials.get("revenue_total", 0) > 0:
         labour_line = ""
         if financials.get("labour_total", 0) > 0:
-            labour_line = f"  Labour costs captured: £{financials['labour_total']:,.2f}\n"
+            labour_line = f"  Labour costs captured: {cs}{financials['labour_total']:,.2f}\n"
         fin_block = f"""
 Pre-calculated financial totals for this period:
-  Revenue captured: £{financials['revenue_total']:,.2f}
-  Invoiced costs captured: £{financials['cost_total']:,.2f}
-{labour_line}  Net profit (revenue minus food costs and labour): £{financials['gross_profit']:,.2f}
+  Revenue captured: {cs}{financials['revenue_total']:,.2f}
+  Invoiced costs captured: {cs}{financials['cost_total']:,.2f}
+{labour_line}  Net profit (revenue minus food costs and labour): {cs}{financials['gross_profit']:,.2f}
   Food GP margin (before labour): {financials.get('food_margin_pct', 0)}%
   Net margin (after labour): {financials.get('net_margin_pct', 0)}%
   Note: costs = invoices photographed this week. Labour = entries via /labour command.
 """
 
-    return f"""You are Restaurant-IQ, an AI intelligence service for "{restaurant_name}", a London food business.
-You combine chartered accountancy discipline and food economics expertise with AI analysis.
+    return f"""You are TradeFlow, an AI intelligence service for "{restaurant_name}".
+You combine chartered accountancy discipline and business economics expertise with AI analysis.
+Use {cs} for all monetary values in your response.
 
 Here is all data captured this week from staff voice notes, photos and messages:
 
@@ -498,7 +501,8 @@ def analyze_image(image_path: str, restaurant_name: str) -> dict:
 
 
 def generate_report(entries_data: list, restaurant_name: str,
-                    financials: dict | None = None) -> str:
+                    financials: dict | None = None,
+                    currency_symbol: str = "£") -> str:
     tier = _select_tier()
     provider = tier["provider"]
 
@@ -523,7 +527,7 @@ def generate_report(entries_data: list, restaurant_name: str,
                 item["action_needed"] = True
         summary.append(item)
 
-    prompt = _report_prompt(summary, restaurant_name, financials)
+    prompt = _report_prompt(summary, restaurant_name, financials, currency_symbol)
 
     try:
         if provider == "groq":
@@ -720,7 +724,7 @@ def answer_help_question(question: str, restaurant_name: str) -> str:
     tier = _select_tier()
     provider = tier["provider"]
 
-    prompt = f"""You are Restaurant-IQ, a Telegram bot assistant for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, a Telegram bot assistant for "{restaurant_name}".
 The owner is asking a question about how to use you.
 
 QUESTION: "{question}"
@@ -783,7 +787,8 @@ Use plain English, no jargon. Keep your answer under 200 words."""
 
 
 def generate_tips_report(tips_events: list, summary: dict,
-                         restaurant_name: str, period_label: str) -> str:
+                         restaurant_name: str, period_label: str,
+                         currency_symbol: str = "£") -> str:
     """
     Generate a Tips Act compliant monthly allocation record.
     Employment (Allocation of Tips) Act 2023 — in force October 2024.
@@ -791,6 +796,7 @@ def generate_tips_report(tips_events: list, summary: dict,
     tier = _select_tier()
     provider = tier["provider"]
 
+    cs = currency_symbol
     events_block = ""
     if tips_events:
         lines = []
@@ -798,14 +804,15 @@ def generate_tips_report(tips_events: list, summary: dict,
             lines.append(
                 f"  {t.get('event_date')}  {t.get('shift', 'unspecified shift')}  "
                 f"{t.get('tip_type', 'unknown').upper()}  "
-                f"£{t.get('gross_amount') or 0:.2f}  "
+                f"{cs}{t.get('gross_amount') or 0:.2f}  "
                 f"Notes: {t.get('staff_notes', '') or 'none'}"
             )
         events_block = "\n".join(lines)
     else:
         events_block = "  No individual tip events recorded for this period."
 
-    prompt = f"""You are Restaurant-IQ, generating a Tips Act compliance record for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, generating a tips compliance record for "{restaurant_name}".
+Use {cs} for all monetary values in your response.
 
 UK LAW CONTEXT (Employment (Allocation of Tips) Act 2023, in force October 2024):
 - Employers must pass 100% of customer tips to workers, with no deductions.
@@ -819,10 +826,10 @@ RECORDED TIP EVENTS:
 {events_block}
 
 PERIOD TOTALS:
-  Card tips:    £{summary.get('card', 0):.2f}
-  Cash tips:    £{summary.get('cash', 0):.2f}
-  Type unknown: £{summary.get('unknown', 0):.2f}
-  TOTAL:        £{summary.get('total', 0):.2f}
+  Card tips:    {cs}{summary.get('card', 0):.2f}
+  Cash tips:    {cs}{summary.get('cash', 0):.2f}
+  Type unknown: {cs}{summary.get('unknown', 0):.2f}
+  TOTAL:        {cs}{summary.get('total', 0):.2f}
   Events logged: {summary.get('events', 0)}
 
 Write a formal compliance record with these sections:
@@ -858,8 +865,8 @@ Use £ for all currency. Plain text format, no filler."""
         return (
             f"## TIPS ALLOCATION RECORD — {restaurant_name.upper()}\n"
             f"Period: {period_label}\n\n"
-            f"Total tips recorded: £{summary.get('total', 0):.2f} across {summary.get('events', 0)} events.\n"
-            f"Card: £{summary.get('card', 0):.2f}  |  Cash: £{summary.get('cash', 0):.2f}\n\n"
+            f"Total tips recorded: {cs}{summary.get('total', 0):.2f} across {summary.get('events', 0)} events.\n"
+            f"Card: {cs}{summary.get('card', 0):.2f}  |  Cash: {cs}{summary.get('cash', 0):.2f}\n\n"
             f"Raw events:\n{events_block}\n\n"
             f"Note: AI report generation failed — raw data shown above for manual record-keeping."
         )
@@ -887,7 +894,7 @@ def generate_inspection_report(entries_data: list, restaurant_name: str) -> str:
 
     entries_block = "\n".join(lines) if lines else "No entries found."
 
-    prompt = f"""You are Restaurant-IQ, preparing an inspection readiness report for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, preparing an inspection readiness report for "{restaurant_name}".
 UK Food Standards Agency (FSA) inspectors assess: food safety management, structural condition,
 confidence in management. They award a 0-5 star Food Hygiene Rating (public-facing).
 
@@ -966,7 +973,7 @@ def generate_recall_summary(entries_data: list, query_text: str,
 
     entries_block = "\n".join(lines) if lines else "No entries found for this period."
 
-    prompt = f"""You are Restaurant-IQ, the operational memory for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, the operational memory for "{restaurant_name}".
 
 The owner has asked: "{query_text}"
 

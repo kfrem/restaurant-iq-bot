@@ -1,5 +1,5 @@
 """
-Restaurant-IQ Telegram Bot
+TradeFlow Telegram Bot
 --------------------------
 Entry point. Run with:  python bot.py
 
@@ -16,7 +16,7 @@ Handles:
   - /demo               — load a realistic week of demo data for client presentations
   - /demoreset          — remove all demo data from this chat
 
-UK Legal Compliance (unique to Restaurant-IQ):
+UK Legal Compliance (unique to TradeFlow):
   - /tips [period]      — tip events log (Employment (Allocation of Tips) Act 2023)
   - /tipsreport         — formal Tips Act compliance record (3-year retention duty)
   - /allergens          — allergen traceability log (Natasha's Law / FSA)
@@ -50,7 +50,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID, DEFAULT_CURRENCY_CODE, DEFAULT_CURRENCY_SYMBOL
 from dashboard import start_dashboard_server
 from database import (
     init_db,
@@ -110,6 +110,9 @@ from database import (
     copy_rota_week,
     clear_rota_week,
     get_or_create_dashboard_token,
+    get_restaurant_currency,
+    set_restaurant_currency,
+    SUPPORTED_CURRENCIES,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -133,8 +136,20 @@ PHOTO_DIR = "photo_files"
 
 URGENCY_ICONS = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 
-# Regex to extract monetary amounts like £450, £1,200, 1200, 1200.50
-_re_amount = re.compile(r"£?([\d,]+(?:\.\d{1,2})?)")
+# Regex to extract monetary amounts like £450, $450, ₦450, 1200, 1200.50
+_re_amount = re.compile(r"[£$€₦R]?([\d,]+(?:\.\d{1,2})?)")
+
+
+def _cs(restaurant) -> str:
+    """Return the currency symbol for this restaurant (e.g. £, $, ₦).
+    Works with both sqlite3.Row objects and plain dicts."""
+    if restaurant is None:
+        return DEFAULT_CURRENCY_SYMBOL
+    try:
+        sym = restaurant["currency_symbol"]
+        return sym if sym else DEFAULT_CURRENCY_SYMBOL
+    except (KeyError, TypeError, IndexError):
+        return DEFAULT_CURRENCY_SYMBOL
 
 for _d in [REPORTS_DIR, VOICE_DIR, PHOTO_DIR]:
     os.makedirs(_d, exist_ok=True)
@@ -316,10 +331,11 @@ def _auto_log_compliance(restaurant_id: int, entry_id: int, analysis: dict, entr
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome to Restaurant-IQ!\n\n"
+        "Welcome to TradeFlow!\n\n"
         "I capture operational data from your team and turn it into weekly intelligence briefings.\n\n"
         "SETUP:\n"
-        "  /register YourRestaurantName — Register this group\n\n"
+        "  /register YourBusinessName — Register this group\n"
+        "  /currency USD              — Set your currency (GBP, USD, NGN, KES, ZAR, GHS...)\n\n"
         "DAILY USE (just send me):\n"
         "  Voice note — Shift update, observations, issues\n"
         "  Photo       — Invoice, receipt, delivery note\n"
@@ -344,19 +360,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /recall March          — Everything recorded in March\n"
         "  /status                — Entries captured this week\n\n"
         "COSTS & LABOUR:\n"
-        "  /labour £450 wages Mon — Record wages or labour costs\n"
+        "  /labour 450 wages Mon  — Record wages or labour costs\n"
         "  /outstanding           — List unpaid invoices\n"
         "  /markpaid 12           — Mark invoice #12 as paid\n\n"
         "TEAM & MENU:\n"
         "  /teamstats             — Who's contributing and how much\n"
-        "  /eightysix             — Most frequently 86'd menu items\n\n"
-        "UK LEGAL COMPLIANCE:\n"
+        "  /eightysix             — Most frequently 86'd items\n\n"
+        "COMPLIANCE (Restaurant Pack):\n"
         "  /tips                  — Tips log (Tips Act 2023)\n"
         "  /tipsreport            — Formal tip allocation record\n"
         "  /allergens             — Allergen traceability log (Natasha's Law)\n"
         "  /inspection            — FSA inspection readiness report\n\n"
         "DATA MANAGEMENT:\n"
-        "  /rename NewName        — Rename your restaurant\n"
+        "  /rename NewName        — Rename your business\n"
         "  /import [dates]: [description] — Import any historical period\n"
         "  /export                — Export entries as CSV (Excel/accountants)\n"
         "  /export xero           — Xero Bills import CSV (purchase invoices)\n"
@@ -365,11 +381,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
-        "  /ask [question]        — AI-powered help (anything about Restaurant IQ)\n"
+        "  /ask [question]        — AI-powered help\n"
         "  /support [message]     — Contact the support team\n"
         "  /supportstatus         — Check your support tickets\n\n"
         "Every message from any team member in this group is captured and analysed.\n"
-        "Tips and allergen risks are detected and logged automatically.\n"
         "Weekly reports are sent automatically every Monday at 08:00.\n\n"
         "Type /features for a full guide, or /ask [your question] for instant help."
     )
@@ -419,8 +434,9 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _do_register(name, chat_id, user_id, update.effective_user.first_name)
         context.user_data["reg_chat_id"] = chat_id
         await update.message.reply_text(
-            f"*{name}* is now registered and Restaurant IQ is live!\n\n"
+            f"*{name}* is now registered and TradeFlow is live!\n\n"
             f"Team members can start sending voice notes, photos and texts right away.\n\n"
+            f"Tip: run /currency to set your local currency (default: GBP).\n\n"
             f"─────────────────────\n"
             f"*Optional: Complete your company profile*\n"
             f"Adding your details means they appear on every report.\n\n"
@@ -433,10 +449,10 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # No name given — ask for it
     await update.message.reply_text(
-        "*Welcome to Restaurant-IQ!*\n\n"
+        "*Welcome to TradeFlow!*\n\n"
         "Let's get you set up. This takes about 2 minutes.\n"
         "You can skip any optional step.\n\n"
-        "*What is your restaurant or business trading name?*",
+        "*What is your business trading name?*",
         parse_mode="Markdown",
     )
     context.user_data["reg_chat_id"] = chat_id
@@ -462,8 +478,9 @@ async def _reg_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _do_register(name, chat_id, user_id, update.effective_user.first_name)
 
     await update.message.reply_text(
-        f"*{name}* is now registered and Restaurant IQ is live!\n\n"
+        f"*{name}* is now registered and TradeFlow is live!\n\n"
         f"Team members can start sending voice notes, photos and texts right away.\n\n"
+        f"Tip: run /currency to set your local currency (default: GBP).\n\n"
         f"─────────────────────\n"
         f"*Optional: Complete your company profile*\n"
         f"Adding details means they appear on every report.\n\n"
@@ -596,7 +613,7 @@ async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*What to do next:*\n"
         f"  • Send a voice note about today's shift\n"
         f"  • Send a photo of an invoice\n"
-        f"  • Type /features to see everything Restaurant IQ can do",
+        f"  • Type /features to see everything TradeFlow can do",
         parse_mode="Markdown",
     )
     context.user_data.clear()
@@ -668,7 +685,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"Restaurant-IQ — {restaurant['name']}\n"
+        f"TradeFlow — {restaurant['name']}\n"
         f"Week from: {week_start_str}\n\n"
         f"Entries captured: {len(entries)}\n"
         f"By category:\n{cat_summary}\n\n"
@@ -850,7 +867,7 @@ async def cmd_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(entry)
 
-    report_text = generate_weekly_report(entries_data, restaurant["name"], financials)
+    report_text = generate_weekly_report(entries_data, restaurant["name"], financials, _cs(restaurant))
 
     save_weekly_report(restaurant["id"], week_start, week_end, report_text)
 
@@ -988,17 +1005,18 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+    sym = _cs(restaurant)
     cost_lines = ""
     if fin["cost_items"]:
         cost_lines = "\nInvoices captured:\n" + "\n".join(
-            f"  {item['date']}  {item['supplier']:.<30} £{item['amount']:>8,.2f}"
+            f"  {item['date']}  {item['supplier']:.<30} {sym}{item['amount']:>8,.2f}"
             for item in fin["cost_items"]
         )
 
     labour_lines = ""
     if fin.get("labour_items"):
         labour_lines = "\nLabour recorded:\n" + "\n".join(
-            f"  {item['date']}  {(item['description'] or 'Labour'):.<30} £{item['amount']:>8,.2f}"
+            f"  {item['date']}  {(item['description'] or 'Labour'):.<30} {sym}{item['amount']:>8,.2f}"
             for item in fin["labour_items"]
         )
 
@@ -1016,12 +1034,12 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
     outstanding = get_outstanding_invoices(restaurant["id"])
     outstanding_total = sum(inv["total_amount"] or 0 for inv in outstanding)
     outstanding_line = (
-        f"\nOutstanding invoices (unpaid): {len(outstanding)} totalling £{outstanding_total:,.2f}"
+        f"\nOutstanding invoices (unpaid): {len(outstanding)} totalling {sym}{outstanding_total:,.2f}"
         if outstanding else "\nAll captured invoices: paid ✅"
     )
 
     labour_note = (
-        f"\nLabour costs:            £{fin['labour_total']:>10,.2f}"
+        f"\nLabour costs:            {sym}{fin['labour_total']:>10,.2f}"
         if fin.get("labour_total", 0) > 0
         else "\nLabour costs:               not recorded — use /labour to add"
     )
@@ -1030,11 +1048,11 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Financial Summary — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 40}\n\n"
-        f"Revenue captured:        £{fin['revenue_total']:>10,.2f}\n"
-        f"Invoiced costs captured: £{fin['cost_total']:>10,.2f}\n"
+        f"Revenue captured:        {sym}{fin['revenue_total']:>10,.2f}\n"
+        f"Invoiced costs captured: {sym}{fin['cost_total']:>10,.2f}\n"
         f"{labour_note}\n"
         f"{'─' * 40}\n"
-        f"Net profit:              £{fin['gross_profit']:>10,.2f}\n"
+        f"Net profit:              {sym}{fin['gross_profit']:>10,.2f}\n"
         f"Food GP margin:          {food_margin:>9.1f}%\n"
         f"Net margin (inc labour): {net_margin:>9.1f}%\n"
         f"{margin_note}"
@@ -1655,13 +1673,15 @@ async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
             margin_flag = " ⚠️"
         elif s["net_margin"] >= 15:
             margin_flag = " ✅"
+        sym = _cs(restaurant)
         site_lines.append(
             f"\n{s['name']}\n"
-            f"  Revenue:  £{s['revenue']:>9,.2f}  |  Costs: £{s['costs']:>8,.2f}\n"
-            f"  Labour:   £{s['labour']:>9,.2f}  |  Profit: £{s['profit']:>7,.2f}\n"
+            f"  Revenue:  {sym}{s['revenue']:>9,.2f}  |  Costs: {sym}{s['costs']:>8,.2f}\n"
+            f"  Labour:   {sym}{s['labour']:>9,.2f}  |  Profit: {sym}{s['profit']:>7,.2f}\n"
             f"  Food GP: {s['food_margin']:>5.1f}%   |  Net: {s['net_margin']:>5.1f}%{margin_flag}"
         )
 
+    sym = _cs(restaurant)
     context_note = (
         f"\n\n(Showing {len(active_sites)} of {len(all_restaurants)} site(s) — "
         f"{len(all_restaurants) - len(active_sites)} have no data this period)"
@@ -1673,11 +1693,11 @@ async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Period: {period_label}\n"
         f"{divider}\n"
         f"GROUP TOTALS\n"
-        f"  Revenue:         £{total_revenue:>10,.2f}\n"
-        f"  Invoiced costs:  £{total_costs:>10,.2f}\n"
-        f"  Labour:          £{total_labour:>10,.2f}\n"
+        f"  Revenue:         {sym}{total_revenue:>10,.2f}\n"
+        f"  Invoiced costs:  {sym}{total_costs:>10,.2f}\n"
+        f"  Labour:          {sym}{total_labour:>10,.2f}\n"
         f"  {divider[:30]}\n"
-        f"  Net profit:      £{total_profit:>10,.2f}\n"
+        f"  Net profit:      {sym}{total_profit:>10,.2f}\n"
         f"  Food GP margin:  {group_food_margin:>9.1f}%\n"
         f"  Net margin:      {group_net_margin:>9.1f}%\n"
         f"{divider}\n"
@@ -1729,15 +1749,17 @@ async def cmd_outstanding(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             flag = "No due date"
 
-        lines.append(f"#{inv['id']}  {(inv['supplier_name'] or 'Unknown'):.<25} £{amount:>8,.2f}  {flag}")
+        sym = _cs(restaurant)
+        lines.append(f"#{inv['id']}  {(inv['supplier_name'] or 'Unknown'):.<25} {sym}{amount:>8,.2f}  {flag}")
 
     invoices_text = "\n".join(lines)
+    sym = _cs(restaurant)
     await update.message.reply_text(
         f"Outstanding Invoices — {restaurant['name']}\n"
         f"{'─' * 40}\n"
         f"{invoices_text}\n"
         f"{'─' * 40}\n"
-        f"Total outstanding: £{total:,.2f}\n\n"
+        f"Total outstanding: {sym}{total:,.2f}\n\n"
         f"To mark an invoice as paid: /markpaid [id]\n"
         f"Example: /markpaid {invoices[0]['id']}"
     )
@@ -1775,9 +1797,10 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    sym = _cs(restaurant)
     if inv["paid"]:
         await update.message.reply_text(
-            f"Invoice #{invoice_id} ({inv['supplier_name']}, £{inv['total_amount']:.2f}) "
+            f"Invoice #{invoice_id} ({inv['supplier_name']}, {sym}{inv['total_amount']:.2f}) "
             f"was already marked paid on {inv['paid_date']}."
         )
         return
@@ -1856,7 +1879,7 @@ async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_all_entries(restaurant["id"])
     await update.message.reply_text(
         f"All data cleared for {restaurant['name']}.\n\n"
-        f"Your registration is intact — Restaurant IQ will continue capturing new messages.\n"
+        f"Your registration is intact — TradeFlow will continue capturing new messages.\n"
         f"Use /import to backfill historical data if needed."
     )
 
@@ -1879,12 +1902,12 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Ask anything about Restaurant IQ.\n\n"
+            "Ask anything about TradeFlow.\n\n"
             "Examples:\n"
             "  /ask how do I fix a wrong entry?\n"
             "  /ask how do I record tips from last week?\n"
             "  /ask what is the best way to get the weekly report?\n"
-            "  /ask how do I import data from before I started using Restaurant IQ?\n"
+            "  /ask how do I import data from before I started using TradeFlow?\n"
             "  /ask what does the inspection report cover?"
         )
         return
@@ -2086,7 +2109,7 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /support [message]
-    Send a message to the Restaurant-IQ support team.
+    Send a message to the TradeFlow support team.
     They will reply directly in this group when the issue is resolved.
 
     Examples:
@@ -2211,7 +2234,7 @@ async def cmd_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Support update for ticket #{ticket_id}\n"
                 f"{'─' * 30}\n\n"
                 f"Your issue: {ticket['message']}\n\n"
-                f"Response from the Restaurant-IQ team:\n{reply_text}\n\n"
+                f"Response from the TradeFlow team:\n{reply_text}\n\n"
                 f"If this resolves your issue, no further action needed.\n"
                 f"If not, use /support to send a follow-up."
             ),
@@ -2265,12 +2288,13 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    sym = _cs(restaurant)
     lines = []
     for t in events:
         amount = t["gross_amount"] or 0
         tip_type = (t["tip_type"] or "unknown").upper()
         shift = t["shift"] or "unspecified shift"
-        lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  £{amount:.2f}  ({shift})")
+        lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  {sym}{amount:.2f}  ({shift})")
 
     events_text = "\n".join(lines)
 
@@ -2278,11 +2302,11 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Tips Log — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 40}\n\n"
-        f"Card tips:    £{summary['card']:>8,.2f}\n"
-        f"Cash tips:    £{summary['cash']:>8,.2f}\n"
-        f"Unknown type: £{summary['unknown']:>8,.2f}\n"
+        f"Card tips:    {sym}{summary['card']:>8,.2f}\n"
+        f"Cash tips:    {sym}{summary['cash']:>8,.2f}\n"
+        f"Unknown type: {sym}{summary['unknown']:>8,.2f}\n"
         f"{'─' * 40}\n"
-        f"Total:        £{summary['total']:>8,.2f}\n\n"
+        f"Total:        {sym}{summary['total']:>8,.2f}\n\n"
         f"Events ({len(events)}):\n{events_text}\n\n"
         f"Legal requirement: 100% of tips must be passed to staff.\n"
         f"Records must be kept for 3 years (Tips Act 2023).\n"
@@ -2321,13 +2345,14 @@ async def cmd_tipsreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = f"{_fmt_date(start_date)} to {_fmt_date(end_date)}" if start_date != end_date else _fmt_date(start_date)
 
+    sym = _cs(restaurant)
     await update.message.reply_text(
         f"Generating Tips Act compliance record for {period_label}...\n"
-        f"({len(events)} events, £{summary['total']:.2f} total)"
+        f"({len(events)} events, {sym}{summary['total']:.2f} total)"
     )
 
     events_as_dicts = [dict(e) for e in events]
-    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label)
+    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label, sym)
 
     header = (
         f"TIPS ACT COMPLIANCE RECORD\n"
@@ -2521,7 +2546,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "RESTAURANT IQ — HOW IT WORKS\n"
         "════════════════════════════════════\n\n"
         "Your team sends messages to this group as normal.\n"
-        "Restaurant IQ reads every message, extracts the useful data,\n"
+        "TradeFlow reads every message, extracts the useful data,\n"
         "and builds a picture of your restaurant's week.\n"
         "No forms. No spreadsheets. Just talk.\n\n"
         "────────────────────────────────────\n"
@@ -2543,7 +2568,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Works for: supplier invoices, delivery dockets, utility bills, repair invoices.\n"
         "Best results: photo flat, good light, all four corners visible.\n\n"
         "3. TEXT MESSAGES\n"
-        "Type anything — Restaurant IQ captures and categorises it.\n\n"
+        "Type anything — TradeFlow captures and categorises it.\n\n"
         "Examples:\n"
         "  \"Butcher raised beef prices by 9% this week\"\n"
         "  \"Ahmed was 40 mins late — third time this month\"\n"
@@ -2579,7 +2604,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "────────────────────────────────────\n"
         "WHAT IT CANNOT CAPTURE\n"
         "────────────────────────────────────\n\n"
-        "  ✗ Revenue you don't report — Restaurant IQ only knows what your team tells it\n"
+        "  ✗ Revenue you don't report — TradeFlow only knows what your team tells it\n"
         "  ✗ Staff hours or wages — no labour cost tracking\n"
         "  ✗ Till or EPOS data — no integration with payment systems\n"
         "  ✗ Blurry or dark invoice photos — AI cannot read unclear images\n"
@@ -2624,7 +2649,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "UK LEGAL COMPLIANCE COMMANDS\n"
         "══════════════════════════════\n\n"
-        "These features are unique to Restaurant-IQ and built specifically\n"
+        "These features are unique to TradeFlow and built specifically\n"
         "for UK legal requirements that every restaurant must meet.\n\n"
         "/import [date range]: [description]\n"
         "  Import any historical period in plain English.\n"
@@ -2686,11 +2711,11 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "gives the AI enough to produce sharp weekly insights.\n\n"
         "INVOICES:\n"
         "Photograph every invoice the day it arrives — not in batches.\n"
-        "Restaurant IQ tracks due dates from the invoice date, so late uploads\n"
+        "TradeFlow tracks due dates from the invoice date, so late uploads\n"
         "mean you miss payment warnings.\n\n"
         "YOUR TEAM:\n"
         "Add all staff to this Telegram group.\n"
-        "Restaurant IQ records who sent each update, so the weekly report\n"
+        "TradeFlow records who sent each update, so the weekly report\n"
         "can link issues and wins to the right shifts and people.\n\n"
         "WHAT GOOD ENTRIES LOOK LIKE:\n"
         "  ✅ \"Friday lunch: 44 covers, £1,180. Veg soup sold out at 1pm.\n"
@@ -3514,14 +3539,14 @@ async def _auto_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
                         pass
                 entries_data.append(entry)
 
-            report_text = generate_weekly_report(entries_data, restaurant["name"], financials)
+            report_text = generate_weekly_report(entries_data, restaurant["name"], financials, _cs(restaurant))
             save_weekly_report(restaurant["id"], week_start, week_end, report_text)
 
             safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
             pdf_path = os.path.join(REPORTS_DIR, f"{safe_name}_{week_start}.pdf")
             generate_pdf_report(report_text, restaurant["name"], week_start, week_end, pdf_path)
 
-            header = f"RESTAURANT-IQ WEEKLY BRIEFING\n{'=' * 34}\n\n"
+            header = f"TRADEFLOW WEEKLY BRIEFING\n{'=' * 34}\n\n"
             full_message = header + report_text
             if len(full_message) <= 4096:
                 await context.bot.send_message(chat_id=chat_id, text=full_message)
@@ -3656,12 +3681,63 @@ def _get_version_info() -> dict:
     return _VERSION_CACHE
 
 
+async def cmd_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/currency [CODE] — view or set the currency for this business.
+
+    Supported codes: GBP, USD, EUR, NGN, KES, ZAR, GHS, UGX, TZS, XOF
+
+    Examples:
+      /currency          — show current currency
+      /currency USD      — switch to US Dollar ($)
+      /currency NGN      — switch to Nigerian Naira (₦)
+      /currency KES      — switch to Kenyan Shilling (KSh)
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        code, sym = get_restaurant_currency(chat_id)
+        display_name = SUPPORTED_CURRENCIES.get(code, (sym, code))[1]
+        supported = "\n".join(
+            f"  {c} — {sym_} ({name})"
+            for c, (sym_, name) in SUPPORTED_CURRENCIES.items()
+        )
+        await update.message.reply_text(
+            f"Currency — {restaurant['name']}\n"
+            f"{'─' * 36}\n"
+            f"Current: {code} ({sym}) — {display_name}\n\n"
+            f"To change: /currency CODE\n\n"
+            f"Supported currencies:\n{supported}"
+        )
+        return
+
+    requested = context.args[0].upper()
+    try:
+        code, sym = set_restaurant_currency(chat_id, requested)
+        display_name = SUPPORTED_CURRENCIES[code][1]
+        await update.message.reply_text(
+            f"Currency updated to *{code}* ({sym}) — {display_name}\n\n"
+            f"All financial displays in {restaurant['name']} will now use {sym}.",
+            parse_mode="Markdown",
+        )
+    except ValueError:
+        supported_codes = ", ".join(SUPPORTED_CURRENCIES.keys())
+        await update.message.reply_text(
+            f"Unsupported currency code: {requested}\n\n"
+            f"Supported codes: {supported_codes}\n"
+            f"Example: /currency USD"
+        )
+
+
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
 
     text = (
-        f"*Restaurant IQ* — v1.1 (Rebrand)\n"
+        f"*TradeFlow* — v2.0 (Multi-currency & International)\n"
         f"Commit: `{info['hash']}`\n"
         f"Deployed: {info['date']}"
     )
@@ -3688,7 +3764,7 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Loading demo data here would mix fake data with your real records.\n\n"
             f"To try the demo safely:\n"
             f"  1. Create a new Telegram group\n"
-            f"  2. Add Restaurant IQ to that group\n"
+            f"  2. Add TradeFlow to that group\n"
             f"  3. Run /demo there\n\n"
             f"Your real data in this group is untouched."
         )
@@ -3870,6 +3946,7 @@ def main():
     app.add_handler(CommandHandler("groupreport", cmd_groupreport))
     app.add_handler(CommandHandler("outstanding", cmd_outstanding))
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
+    app.add_handler(CommandHandler("currency", cmd_currency))
     app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
@@ -3930,7 +4007,7 @@ def main():
     _port = int(os.environ.get("PORT", 8080))
     start_dashboard_server(_port)
 
-    logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")
+    logger.info("TradeFlow Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)
 
 

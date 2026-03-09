@@ -24,5 +24,6 @@ def analyze_invoice_photo(image_path: str, restaurant_name: str = "") -> dict:
 
 
 def generate_weekly_report(entries_data: list, restaurant_name: str = "",
-                           financials: dict | None = None) -> str:
-    return generate_report(entries_data, restaurant_name, financials)
+                           financials: dict | None = None,
+                           currency_symbol: str = "£") -> str:
+    return generate_report(entries_data, restaurant_name, financials, currency_symbol)

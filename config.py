@@ -35,6 +35,12 @@ GEMINI_MODEL     = os.getenv("GEMINI_MODEL",     "gemini-2.0-flash")
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
 DB_PATH            = os.getenv("DB_PATH",            "restaurant_iq.db")
 
+# ── TradeFlow: Currency & Branding ───────────────────────────────────────────
+# Default currency for new registrations. Overridden per-business with /currency.
+# Supported codes: GBP, USD, EUR, NGN, KES, ZAR, GHS, UGX, TZS, XOF
+DEFAULT_CURRENCY_CODE   = os.getenv("DEFAULT_CURRENCY_CODE", "GBP")
+DEFAULT_CURRENCY_SYMBOL = os.getenv("DEFAULT_CURRENCY_SYMBOL", "£")
+
 # ── Support system ────────────────────────────────────────────────────────────
 # Set this to the Telegram chat ID where support tickets should be forwarded.
 # This is the app owner's personal Telegram chat or a private support group.
