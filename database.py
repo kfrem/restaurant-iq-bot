@@ -54,6 +54,10 @@ def init_db():
             ("website", "TEXT"), ("company_number", "TEXT"), ("vat_number", "TEXT"),
             ("cuisine_type", "TEXT"), ("num_covers", "INTEGER"),
             ("num_branches", "INTEGER"), ("profile_complete", "INTEGER DEFAULT 0"),
+            # TradeFlow: multi-currency support
+            ("currency_code", "TEXT DEFAULT 'GBP'"),
+            ("currency_symbol", "TEXT DEFAULT '£'"),
+            ("industry", "TEXT DEFAULT 'restaurant'"),
         ]
         for col, col_type in _profile_cols:
             try:
@@ -214,6 +218,25 @@ def init_db():
             )
         """)
 
+        # Stock par levels — one row per item per restaurant.
+        # par_level is the minimum quantity that should always be on hand.
+        # current_level is the last count recorded by staff.
+        # Items where current_level < par_level are flagged as low stock.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS stock_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                par_level REAL NOT NULL DEFAULT 0,
+                unit TEXT DEFAULT '',
+                current_level REAL,
+                last_count_date TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(restaurant_id, item_name),
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+            )
+        """)
+
         conn.commit()
     print("Database initialised.")
 
@@ -271,6 +294,55 @@ def get_restaurant_by_group(group_id: str):
         c = conn.cursor()
         c.execute("SELECT * FROM restaurants WHERE telegram_group_id = ?", (str(group_id),))
         return c.fetchone()
+
+
+# ── TradeFlow: Multi-currency support ────────────────────────────────────────
+
+# Supported currencies: code → (symbol, display_name)
+SUPPORTED_CURRENCIES = {
+    "GBP": ("£",    "British Pound"),
+    "USD": ("$",    "US Dollar"),
+    "EUR": ("€",    "Euro"),
+    "NGN": ("₦",   "Nigerian Naira"),
+    "KES": ("KSh", "Kenyan Shilling"),
+    "ZAR": ("R",   "South African Rand"),
+    "GHS": ("GH₵", "Ghanaian Cedi"),
+    "UGX": ("USh", "Ugandan Shilling"),
+    "TZS": ("TSh", "Tanzanian Shilling"),
+    "XOF": ("CFA", "West African CFA Franc"),
+}
+
+
+def get_restaurant_currency(group_id: str) -> tuple[str, str]:
+    """Return (currency_code, currency_symbol) for the given group.
+    Defaults to GBP / £ if not set or if the restaurant is not found."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT currency_code, currency_symbol FROM restaurants WHERE telegram_group_id = ?",
+            (str(group_id),),
+        )
+        row = c.fetchone()
+    if row and row["currency_code"]:
+        return row["currency_code"], row["currency_symbol"] or "£"
+    return "GBP", "£"
+
+
+def set_restaurant_currency(group_id: str, currency_code: str) -> tuple[str, str]:
+    """Set the currency for a restaurant. Returns (code, symbol).
+    Raises ValueError if the currency code is not supported."""
+    code = currency_code.upper()
+    if code not in SUPPORTED_CURRENCIES:
+        raise ValueError(f"Unsupported currency: {code}")
+    symbol, _ = SUPPORTED_CURRENCIES[code]
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE restaurants SET currency_code = ?, currency_symbol = ? WHERE telegram_group_id = ?",
+            (code, symbol, str(group_id)),
+        )
+        conn.commit()
+    return code, symbol
 
 
 def register_staff(restaurant_id: int, telegram_user_id: str, name: str, role: str = "staff"):
@@ -478,6 +550,19 @@ def mark_invoice_paid(invoice_id: int) -> bool:
         )
         conn.commit()
         return c.rowcount > 0
+
+
+def get_invoices_for_period(restaurant_id: int, start_date: str, end_date: str) -> list:
+    """Return all invoices (paid and unpaid) within a date range, ordered by invoice date."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM invoices
+               WHERE restaurant_id = ? AND invoice_date BETWEEN ? AND ?
+               ORDER BY invoice_date ASC""",
+            (restaurant_id, start_date, end_date),
+        )
+        return c.fetchall()
 
 
 def get_invoices_due_soon(days_ahead: int = 3) -> list:
@@ -962,3 +1047,224 @@ def delete_entries_older_than(restaurant_id: int, days: int) -> int:
         c.execute(f"DELETE FROM daily_entries WHERE id IN ({placeholders})", entry_ids)
         conn.commit()
         return len(entry_ids)
+
+
+# ── Stock par level tracking ──────────────────────────────────────────────────
+
+def set_stock_par(restaurant_id: int, item_name: str, par_level: float, unit: str = "") -> int:
+    """Create or update a stock par level for an item. Returns the row id."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO stock_items (restaurant_id, item_name, par_level, unit)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(restaurant_id, item_name)
+               DO UPDATE SET par_level = excluded.par_level,
+                             unit = CASE WHEN excluded.unit != '' THEN excluded.unit
+                                         ELSE unit END""",
+            (restaurant_id, item_name.lower().strip(), par_level, unit),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def update_stock_count(restaurant_id: int, item_name: str, current_level: float) -> bool:
+    """Record a stock count for an item. Item must already have a par level set.
+    Returns True if updated, False if item not found."""
+    with _db() as conn:
+        c = conn.cursor()
+        today = datetime.now().strftime("%Y-%m-%d")
+        c.execute(
+            """UPDATE stock_items
+               SET current_level = ?, last_count_date = ?
+               WHERE restaurant_id = ? AND item_name = ?""",
+            (current_level, today, restaurant_id, item_name.lower().strip()),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_stock_status(restaurant_id: int) -> list:
+    """Return all stock items for a restaurant, ordered by name."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM stock_items
+               WHERE restaurant_id = ?
+               ORDER BY item_name ASC""",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def get_low_stock_items(restaurant_id: int) -> list:
+    """Return items where current_level < par_level (and current_level has been set)."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM stock_items
+               WHERE restaurant_id = ?
+                 AND current_level IS NOT NULL
+                 AND current_level < par_level
+               ORDER BY (par_level - current_level) DESC""",
+            (restaurant_id,),
+        )
+        return c.fetchall()
+
+
+def delete_stock_item(restaurant_id: int, item_name: str) -> bool:
+    """Remove a stock item and its par level. Returns True if deleted."""
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM stock_items WHERE restaurant_id = ? AND item_name = ?",
+            (restaurant_id, item_name.lower().strip()),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+# ── Staff rota / shift scheduling ─────────────────────────────────────────────
+
+def _ensure_rota_table(conn):
+    """Create rota_shifts table if it doesn't exist yet (lazy migration)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rota_shifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            shift_date TEXT NOT NULL,
+            staff_name TEXT NOT NULL,
+            start_time TEXT DEFAULT '',
+            end_time TEXT DEFAULT '',
+            role TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+        )
+    """)
+
+
+def add_rota_shift(restaurant_id: int, shift_date: str, staff_name: str,
+                   start_time: str = "", end_time: str = "",
+                   role: str = "", notes: str = "") -> int:
+    """Add a single shift to the rota. Returns the new row id."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO rota_shifts
+               (restaurant_id, shift_date, staff_name, start_time, end_time, role, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (restaurant_id, shift_date, staff_name.strip(),
+             start_time, end_time, role, notes),
+        )
+        conn.commit()
+        return c.lastrowid
+
+
+def get_rota_for_week(restaurant_id: int, week_start: str, week_end: str) -> list:
+    """Return all shifts for a week, ordered by date then start_time."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            """SELECT * FROM rota_shifts
+               WHERE restaurant_id = ? AND shift_date BETWEEN ? AND ?
+               ORDER BY shift_date ASC, start_time ASC, staff_name ASC""",
+            (restaurant_id, week_start, week_end),
+        )
+        return c.fetchall()
+
+
+def delete_rota_shift(shift_id: int, restaurant_id: int) -> bool:
+    """Delete a shift by id. Requires restaurant_id for safety. Returns True if deleted."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM rota_shifts WHERE id = ? AND restaurant_id = ?",
+            (shift_id, restaurant_id),
+        )
+        conn.commit()
+        return c.rowcount > 0
+
+
+def copy_rota_week(restaurant_id: int, from_start: str, from_end: str,
+                   to_start: str) -> int:
+    """Copy all shifts from one week to a target week.
+    to_start is the Monday of the destination week.
+    Returns count of shifts copied."""
+    source_shifts = get_rota_for_week(restaurant_id, from_start, from_end)
+    if not source_shifts:
+        return 0
+    from datetime import datetime as _dt, timedelta as _td
+    from_monday = _dt.strptime(from_start, "%Y-%m-%d").date()
+    to_monday = _dt.strptime(to_start, "%Y-%m-%d").date()
+    offset = to_monday - from_monday
+    copied = 0
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        for shift in source_shifts:
+            original = _dt.strptime(shift["shift_date"], "%Y-%m-%d").date()
+            new_date = (original + offset).strftime("%Y-%m-%d")
+            c.execute(
+                """INSERT INTO rota_shifts
+                   (restaurant_id, shift_date, staff_name, start_time, end_time, role, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (restaurant_id, new_date, shift["staff_name"],
+                 shift["start_time"], shift["end_time"],
+                 shift["role"], shift["notes"]),
+            )
+            copied += 1
+        conn.commit()
+    return copied
+
+
+def clear_rota_week(restaurant_id: int, week_start: str, week_end: str) -> int:
+    """Delete all shifts for a week. Returns count deleted."""
+    with _db() as conn:
+        _ensure_rota_table(conn)
+        c = conn.cursor()
+        c.execute(
+            "DELETE FROM rota_shifts WHERE restaurant_id = ? AND shift_date BETWEEN ? AND ?",
+            (restaurant_id, week_start, week_end),
+        )
+        conn.commit()
+        return c.rowcount
+
+
+# ── Dashboard token ────────────────────────────────────────────────────────────
+
+def get_or_create_dashboard_token(restaurant_id: int) -> str:
+    """Return the dashboard auth token for a restaurant, creating one if needed."""
+    import uuid as _uuid
+    with _db() as conn:
+        try:
+            conn.execute("ALTER TABLE restaurants ADD COLUMN dashboard_token TEXT")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+        c = conn.cursor()
+        c.execute("SELECT dashboard_token FROM restaurants WHERE id = ?", (restaurant_id,))
+        row = c.fetchone()
+        if row and row["dashboard_token"]:
+            return row["dashboard_token"]
+        token = _uuid.uuid4().hex
+        c.execute(
+            "UPDATE restaurants SET dashboard_token = ? WHERE id = ?",
+            (token, restaurant_id),
+        )
+        conn.commit()
+        return token
+
+
+def get_restaurant_by_dashboard_token(token: str):
+    """Return the restaurant row matching a dashboard token, or None."""
+    with _db() as conn:
+        c = conn.cursor()
+        try:
+            c.execute("SELECT * FROM restaurants WHERE dashboard_token = ?", (token,))
+            return c.fetchone()
+        except Exception:
+            return None

@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradeFlow — Business Intelligence for Any Trade</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --brand: #FF6B2B;
+    --brand-dark: #E55A1A;
+    --brand-light: #FFF3EE;
+    --navy: #1A1F36;
+    --dark: #2D3250;
+    --mid: #5A6082;
+    --light: #8B93B8;
+    --border: #E8EAF0;
+    --bg: #F7F8FC;
+    --white: #FFFFFF;
+    --green: #10B981;
+    --yellow: #F59E0B;
+    --red: #EF4444;
+  }
+
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: white;
+    color: var(--dark);
+    line-height: 1.6;
+  }
+
+  @media print {
+    body { font-size: 11pt; }
+    .no-print, .print-btn { display: none !important; }
+    .page-break { page-break-before: always; }
+    section { break-inside: avoid; }
+    .hero { background: var(--navy) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .stat-card, .feature-card, .pain-card, .proof-card, .price-card {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      break-inside: avoid;
+    }
+  }
+
+  .print-btn {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--brand);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(255,107,43,0.4);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+  }
+  .print-btn:hover { background: var(--brand-dark); transform: translateY(-1px); }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 0 28px; }
+  .section-label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--brand);
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--navy);
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+  .section-sub {
+    font-size: 18px;
+    color: var(--mid);
+    max-width: 620px;
+    line-height: 1.7;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .text-center { text-align: center; }
+  .text-center .section-sub { margin: 0 auto; }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(135deg, #0F1225 0%, #1A1F36 50%, #252B4A 100%);
+    color: white;
+    padding: 80px 0 70px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -100px; right: -100px;
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(255,107,43,0.15) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .hero-logo-mark {
+    width: 50px; height: 50px;
+    background: var(--brand);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+  }
+  .hero-logo-text {
+    font-size: 22px;
+    font-weight: 800;
+    color: white;
+    letter-spacing: -0.5px;
+  }
+  .hero-logo-sub {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+    font-weight: 500;
+    margin-top: 2px;
+  }
+  .hero h1 {
+    font-size: 54px;
+    font-weight: 900;
+    line-height: 1.1;
+    letter-spacing: -1.5px;
+    margin-bottom: 20px;
+  }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--brand);
+  }
+  .hero-sub {
+    font-size: 20px;
+    color: rgba(255,255,255,0.75);
+    max-width: 600px;
+    line-height: 1.6;
+    margin-bottom: 36px;
+  }
+  .hero-badges {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .badge {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.85);
+    padding: 8px 16px;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* STATS */
+  .stats-bar {
+    background: var(--brand);
+    padding: 32px 0;
+  }
+  .stat-card {
+    text-align: center;
+    color: white;
+  }
+  .stat-card .number {
+    font-size: 40px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -1px;
+  }
+  .stat-card .label {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 6px;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* SECTIONS */
+  section { padding: 80px 0; }
+  section:nth-child(odd) { background: white; }
+  section:nth-child(even) { background: var(--bg); }
+
+  /* PAIN CARDS */
+  .pain-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .pain-icon {
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    background: #FEF2F2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .pain-card h4 { font-size: 15px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+  .pain-card p { font-size: 14px; color: var(--mid); line-height: 1.5; }
+
+  /* FEATURE CARDS */
+  .feature-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    transition: box-shadow 0.2s, transform 0.2s;
+  }
+  .feature-card:hover { box-shadow: 0 8px 32px rgba(26,31,54,0.1); transform: translateY(-2px); }
+  .feature-icon {
+    width: 52px; height: 52px;
+    border-radius: 14px;
+    background: var(--brand-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-bottom: 16px;
+  }
+  .feature-card h3 { font-size: 17px; font-weight: 700; color: var(--navy); margin-bottom: 10px; }
+  .feature-card p { font-size: 14px; color: var(--mid); line-height: 1.6; }
+
+  /* INDUSTRY CARDS */
+  .industry-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    text-align: center;
+  }
+  .industry-icon { font-size: 36px; margin-bottom: 12px; }
+  .industry-card h4 { font-size: 15px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+  .industry-card p { font-size: 13px; color: var(--mid); line-height: 1.4; }
+  .industry-badge {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 100px;
+    background: #DCFCE7;
+    color: #166534;
+  }
+  .industry-badge.soon {
+    background: #FEF3C7;
+    color: #92400E;
+  }
+
+  /* PRICING */
+  .price-card {
+    background: white;
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 36px 28px;
+    position: relative;
+  }
+  .price-card.featured {
+    border-color: var(--brand);
+    box-shadow: 0 8px 40px rgba(255,107,43,0.15);
+  }
+  .price-badge {
+    position: absolute;
+    top: -13px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--brand);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 16px;
+    border-radius: 100px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .price-label { font-size: 14px; font-weight: 700; color: var(--mid); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .price-name { font-size: 22px; font-weight: 800; color: var(--navy); margin-bottom: 16px; }
+  .price-amount {
+    font-size: 48px;
+    font-weight: 900;
+    color: var(--navy);
+    letter-spacing: -2px;
+    line-height: 1;
+  }
+  .price-amount sup { font-size: 24px; vertical-align: super; letter-spacing: 0; }
+  .price-period { font-size: 15px; color: var(--mid); margin-top: 4px; margin-bottom: 20px; }
+  .price-currency-note {
+    font-size: 12px;
+    color: var(--light);
+    margin-bottom: 20px;
+    font-style: italic;
+  }
+  .price-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .price-list { list-style: none; }
+  .price-list li {
+    font-size: 14px;
+    color: var(--mid);
+    padding: 7px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .price-list li .tick { color: var(--green); font-weight: 700; flex-shrink: 0; }
+  .price-list li .cross { color: var(--light); flex-shrink: 0; }
+  .price-cost-note {
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-top: 20px;
+    font-size: 12px;
+    color: #166534;
+    line-height: 1.5;
+  }
+
+  /* CURRENCY TABLE */
+  .currency-table {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+  .currency-table th {
+    background: var(--navy);
+    color: white;
+    padding: 14px 20px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .currency-table td {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    color: var(--dark);
+  }
+  .currency-table tr:last-child td { border-bottom: none; }
+  .currency-table tr:nth-child(even) td { background: var(--bg); }
+  .currency-table td:first-child { font-weight: 600; }
+  .currency-flag { margin-right: 8px; }
+
+  /* PROOF / TESTIMONIAL */
+  .proof-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+  }
+  .proof-quote { font-size: 16px; color: var(--dark); line-height: 1.7; font-style: italic; margin-bottom: 20px; }
+  .proof-author { display: flex; align-items: center; gap: 12px; }
+  .proof-avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--brand);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 800;
+    font-size: 16px;
+  }
+  .proof-name { font-size: 14px; font-weight: 700; color: var(--navy); }
+  .proof-role { font-size: 13px; color: var(--mid); }
+
+  /* HOW IT WORKS */
+  .step {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: none; }
+  .step-num {
+    width: 36px; height: 36px;
+    background: var(--navy);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .step h4 { font-size: 16px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+  .step p { font-size: 14px; color: var(--mid); line-height: 1.5; }
+
+  /* CTA */
+  .cta-section {
+    background: linear-gradient(135deg, #0F1225 0%, #1A1F36 100%);
+    padding: 80px 0;
+    text-align: center;
+    color: white;
+  }
+  .cta-section h2 { font-size: 42px; font-weight: 900; letter-spacing: -1px; margin-bottom: 16px; }
+  .cta-section p { font-size: 18px; color: rgba(255,255,255,0.7); margin-bottom: 36px; }
+  .btn-primary {
+    background: var(--brand);
+    color: white;
+    border: none;
+    padding: 16px 40px;
+    border-radius: 10px;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    box-shadow: 0 8px 24px rgba(255,107,43,0.4);
+    transition: all 0.2s;
+  }
+  .btn-primary:hover { background: var(--brand-dark); transform: translateY(-2px); }
+  .cta-note { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 20px; }
+
+  /* FOOTER */
+  footer {
+    background: var(--navy);
+    color: rgba(255,255,255,0.5);
+    text-align: center;
+    padding: 28px;
+    font-size: 13px;
+  }
+  footer strong { color: white; }
+
+  /* RESPONSIVE */
+  @media (max-width: 720px) {
+    .hero h1 { font-size: 36px; }
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .section-title { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">🖨 Print / Save PDF</button>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     HERO
+════════════════════════════════════════════════════════════════════════════ -->
+<div class="hero">
+  <div class="container">
+    <div class="hero-logo">
+      <div class="hero-logo-mark">⚡</div>
+      <div>
+        <div class="hero-logo-text">TradeFlow</div>
+        <div class="hero-logo-sub">Operational Intelligence — Any Trade, Any Country</div>
+      </div>
+    </div>
+
+    <h1>Your business.<br>Captured. Analysed.<br><em>Under control.</em></h1>
+    <p class="hero-sub">
+      TradeFlow turns the voice notes, photos and messages your team already sends into weekly P&amp;L reports, cost alerts and compliance records — automatically. No spreadsheets. No extra apps.
+    </p>
+    <div class="hero-badges">
+      <span class="badge">📱 Works on Telegram</span>
+      <span class="badge">🌍 UK · USA · Africa</span>
+      <span class="badge">💷 Multi-currency</span>
+      <span class="badge">🤖 Powered by AI</span>
+      <span class="badge">⚡ Live in 2 minutes</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     STATS BAR
+════════════════════════════════════════════════════════════════════════════ -->
+<div class="stats-bar">
+  <div class="container">
+    <div class="grid-4">
+      <div class="stat-card">
+        <div class="number">2 min</div>
+        <div class="label">Setup time</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">£0</div>
+        <div class="label">Cost to get started</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">7</div>
+        <div class="label">Currencies supported</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">5+</div>
+        <div class="label">Industries served</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     THE PROBLEM
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="section-label">The Problem</div>
+    <h2 class="section-title">Every business loses money the same way</h2>
+    <p class="section-sub">Staff forget to report. Invoices go missing. Cost spikes aren't spotted until it's too late. Nobody has time to build spreadsheets. Sound familiar?</p>
+
+    <div class="grid-2" style="margin-top: 40px;">
+      <div class="pain-card">
+        <div class="pain-icon">📋</div>
+        <div>
+          <h4>No daily records</h4>
+          <p>What happened on Tuesday? Nobody remembers. The data is gone — so is the insight that could have saved you money.</p>
+        </div>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon">💸</div>
+        <div>
+          <h4>Invoice chaos</h4>
+          <p>Paper invoices pile up. Supplier price creep goes unnoticed for months. You're paying more and you don't even know it.</p>
+        </div>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon">⏰</div>
+        <div>
+          <h4>No time for reports</h4>
+          <p>You're running the operation — who has time to build a P&amp;L every week? Nobody. So it never gets done.</p>
+        </div>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon">📱</div>
+        <div>
+          <h4>Another app nobody uses</h4>
+          <p>Your team already ignores the last 3 systems you tried. New platforms create friction. WhatsApp is where they live.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     HOW IT WORKS
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="grid-2" style="align-items: center; gap: 60px;">
+      <div>
+        <div class="section-label">How It Works</div>
+        <h2 class="section-title">Set up in a Telegram group. That's it.</h2>
+        <p class="section-sub">Your team already uses messaging apps. TradeFlow lives inside Telegram — no training required.</p>
+      </div>
+      <div>
+        <div class="step">
+          <div class="step-num">1</div>
+          <div>
+            <h4>Create a Telegram group</h4>
+            <p>One group per location. Add TradeFlow and your team. Takes 2 minutes.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div>
+            <h4>Team sends updates naturally</h4>
+            <p>Voice notes, photos of invoices, quick texts. Whatever they already send. TradeFlow reads every message.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div>
+            <h4>AI extracts and categorises everything</h4>
+            <p>Revenue, costs, staff issues, waste, supplier mentions — all categorised and stored automatically.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div>
+            <h4>Weekly intelligence briefing delivered</h4>
+            <p>Every Monday at 08:00 — full P&amp;L, cost alerts, action priorities, and a PDF report. No effort required.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     CORE FEATURES
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 48px;">
+      <div class="section-label">Core Features — Every Plan</div>
+      <h2 class="section-title">Everything your business needs to stay on top</h2>
+      <p class="section-sub">TradeFlow's core layer works for any trade. Voice notes transcribed, invoices read, weekly reports written — all automatically.</p>
+    </div>
+
+    <div class="grid-3">
+      <div class="feature-card">
+        <div class="feature-icon">🎙️</div>
+        <h3>Voice Note Intelligence</h3>
+        <p>Whisper AI transcribes every voice note in seconds. Revenue, costs, issues, supplier problems — captured from a 30-second voice message.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📸</div>
+        <h3>Invoice Reading</h3>
+        <p>Photograph any invoice. AI reads supplier name, total, line items, due date, VAT. Automatically flagged in your payment tracker.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Weekly P&amp;L Report</h3>
+        <p>Every Monday, a full intelligence briefing: revenue, costs, net margin, staff performance, supplier issues, and numbered action priorities.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💰</div>
+        <h3>Financial Tracking</h3>
+        <p>Revenue vs costs vs labour — tracked continuously. Run /financials any time for an instant P&amp;L for any period.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📅</div>
+        <h3>Invoice Due Dates</h3>
+        <p>Unpaid invoice tracker with automatic due date alerts. Never miss a payment or get caught with an overdue supplier again.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h3>Stock &amp; Rota</h3>
+        <p>Set par levels, log counts, get low-stock alerts. Manage your staff rota directly in the group. No extra apps needed.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">👥</div>
+        <h3>Team Stats</h3>
+        <p>See who's sending updates and who isn't. Drive accountability without spreadsheets. /teamstats shows contribution per person.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📤</div>
+        <h3>Accounting Exports</h3>
+        <p>Export to CSV, Xero Bills, Sage 50, or payroll format. Hand to your accountant in one click — no re-entering data.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🌍</div>
+        <h3>Multi-Currency</h3>
+        <p>Set your currency with /currency — GBP, USD, NGN, KES, ZAR, GHS and more. All reports use your local currency automatically.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     INDUSTRIES
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 48px;">
+      <div class="section-label">Industry Packs</div>
+      <h2 class="section-title">Built for your specific trade</h2>
+      <p class="section-sub">The Core layer works for any business. Industry Packs add features specific to how your trade operates and what regulators require.</p>
+    </div>
+
+    <div class="grid-3" style="margin-bottom: 32px;">
+      <div class="industry-card">
+        <div class="industry-icon">🍽️</div>
+        <h4>Restaurant &amp; Hospitality</h4>
+        <p>Tips Act compliance, allergen traceability, FSA inspection readiness, 86'd items tracker, covers and GP tracking.</p>
+        <span class="industry-badge">Available Now</span>
+      </div>
+      <div class="industry-card">
+        <div class="industry-icon">🔧</div>
+        <h4>Car Garage &amp; MOT</h4>
+        <p>Job sheet tracking, parts cost monitoring, technician productivity, MOT pass rate logging, DVSA compliance records.</p>
+        <span class="industry-badge soon">Coming Soon</span>
+      </div>
+      <div class="industry-card">
+        <div class="industry-icon">✂️</div>
+        <h4>Hair &amp; Beauty Salon</h4>
+        <p>Appointment revenue, product cost tracking, stylist performance, COSHH chemical records, retail vs service split.</p>
+        <span class="industry-badge soon">Coming Soon</span>
+      </div>
+      <div class="industry-card">
+        <div class="industry-icon">🏗️</div>
+        <h4>Construction &amp; Trades</h4>
+        <p>Job costing, materials tracking, subcontractor hours, CIS compliance logging, site daily diaries.</p>
+        <span class="industry-badge soon">Coming Soon</span>
+      </div>
+      <div class="industry-card">
+        <div class="industry-icon">🛒</div>
+        <h4>Retail Shop</h4>
+        <p>Sales by category, shrinkage logging, supplier delivery checks, margin tracking, end-of-day cash reconciliation.</p>
+        <span class="industry-badge soon">Coming Soon</span>
+      </div>
+      <div class="industry-card">
+        <div class="industry-icon">🎯</div>
+        <h4>Your Industry</h4>
+        <p>Don't see your trade? Custom packs are built to order. Tell us your compliance requirements and data needs.</p>
+        <span class="industry-badge soon">Custom Build</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     PRICING
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 48px;">
+      <div class="section-label">Pricing</div>
+      <h2 class="section-title">Simple, predictable, profitable</h2>
+      <p class="section-sub">AI costs are engineered to stay under $3/month per client — so our pricing is built on margin, not guesswork. No usage caps, no surprise bills.</p>
+    </div>
+
+    <div class="grid-3">
+
+      <!-- Core Layer -->
+      <div class="price-card">
+        <div class="price-label">Layer 1</div>
+        <div class="price-name">Core Platform</div>
+        <div class="price-amount"><sup>£</sup>49<span style="font-size:28px">.99</span></div>
+        <div class="price-period">per location / month</div>
+        <div class="price-currency-note">See currency table below for your local price</div>
+        <hr class="price-divider">
+        <ul class="price-list">
+          <li><span class="tick">✓</span> Voice note capture &amp; transcription</li>
+          <li><span class="tick">✓</span> Invoice photo reading (AI vision)</li>
+          <li><span class="tick">✓</span> Weekly P&amp;L intelligence briefing (PDF)</li>
+          <li><span class="tick">✓</span> Revenue, cost &amp; labour tracking</li>
+          <li><span class="tick">✓</span> Invoice due date tracker</li>
+          <li><span class="tick">✓</span> Stock levels &amp; staff rota</li>
+          <li><span class="tick">✓</span> Accounting export (CSV, Xero, Sage)</li>
+          <li><span class="tick">✓</span> Multi-currency (set with /currency)</li>
+          <li><span class="tick">✓</span> Unlimited team members</li>
+          <li><span class="tick">✓</span> Historical data import</li>
+        </ul>
+        <div class="price-cost-note">
+          💡 <strong>Your AI cost:</strong> Under $3/month per client at typical usage — even on paid tiers. Your margin on this plan alone is over 90%.
+        </div>
+      </div>
+
+      <!-- Industry Pack -->
+      <div class="price-card featured">
+        <div class="price-badge">Most Popular</div>
+        <div class="price-label">Layer 2</div>
+        <div class="price-name">Core + Industry Pack</div>
+        <div class="price-amount"><sup>£</sup>49<span style="font-size:28px">.99</span> <span style="font-size:18px;color:var(--mid)">+</span></div>
+        <div class="price-period">Core fee + pack add-on / month</div>
+        <div class="price-currency-note">Pack pricing varies by industry — typically same as Core</div>
+        <hr class="price-divider">
+        <ul class="price-list">
+          <li><span class="tick">✓</span> Everything in Core, plus:</li>
+          <li><span class="tick">✓</span> <strong>Restaurant:</strong> Tips Act compliance records</li>
+          <li><span class="tick">✓</span> <strong>Restaurant:</strong> Allergen traceability log</li>
+          <li><span class="tick">✓</span> <strong>Restaurant:</strong> FSA inspection readiness</li>
+          <li><span class="tick">✓</span> <strong>Restaurant:</strong> 86'd items tracker</li>
+          <li><span class="tick">✓</span> Industry-specific AI prompts &amp; reports</li>
+          <li><span class="tick">✓</span> Compliance document generation</li>
+          <li><span class="tick">✓</span> Regulatory-ready record exports</li>
+          <li><span class="tick">✓</span> Industry KPI dashboard</li>
+        </ul>
+        <div class="price-cost-note">
+          💡 <strong>Your AI cost:</strong> Under $5/month total per client including compliance reports. Pack adds near-zero marginal AI cost.
+        </div>
+      </div>
+
+      <!-- Custom -->
+      <div class="price-card">
+        <div class="price-label">Layer 3</div>
+        <div class="price-name">Custom Modules</div>
+        <div class="price-amount" style="font-size:36px; letter-spacing:-1px;">Quoted</div>
+        <div class="price-period">per module, one-time or monthly</div>
+        <div class="price-currency-note">Scoped and quoted per project</div>
+        <hr class="price-divider">
+        <ul class="price-list">
+          <li><span class="tick">✓</span> Bespoke industry pack build</li>
+          <li><span class="tick">✓</span> Custom compliance frameworks</li>
+          <li><span class="tick">✓</span> ERP / POS integrations</li>
+          <li><span class="tick">✓</span> White-label for your agency/group</li>
+          <li><span class="tick">✓</span> Multi-site group dashboards</li>
+          <li><span class="tick">✓</span> Custom reporting templates</li>
+          <li><span class="tick">✓</span> Dedicated onboarding support</li>
+          <li><span class="tick">✓</span> Priority support SLA</li>
+        </ul>
+        <div class="price-cost-note">
+          💡 <strong>Typical range:</strong> £500–£5,000 one-time build + monthly platform fee. Priced against the value delivered, not hours worked.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     CURRENCY TABLE
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 40px;">
+      <div class="section-label">International Pricing</div>
+      <h2 class="section-title">Same product. Local price.</h2>
+      <p class="section-sub">TradeFlow is built for UK, US and African markets. Pricing is set to be accessible in every market — not just converted from sterling.</p>
+    </div>
+
+    <table class="currency-table">
+      <thead>
+        <tr>
+          <th>Country / Region</th>
+          <th>Currency</th>
+          <th>Core Layer (monthly)</th>
+          <th>+ Industry Pack</th>
+          <th>Command</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="currency-flag">🇬🇧</span>United Kingdom</td>
+          <td>GBP (£)</td>
+          <td><strong>£49.99</strong></td>
+          <td>+ £49.99</td>
+          <td><code>/currency GBP</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇺🇸</span>United States</td>
+          <td>USD ($)</td>
+          <td><strong>$59.99</strong></td>
+          <td>+ $59.99</td>
+          <td><code>/currency USD</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇳🇬</span>Nigeria</td>
+          <td>NGN (₦)</td>
+          <td><strong>₦75,000</strong></td>
+          <td>+ ₦75,000</td>
+          <td><code>/currency NGN</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇰🇪</span>Kenya</td>
+          <td>KES (KSh)</td>
+          <td><strong>KSh 6,500</strong></td>
+          <td>+ KSh 6,500</td>
+          <td><code>/currency KES</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇿🇦</span>South Africa</td>
+          <td>ZAR (R)</td>
+          <td><strong>R950</strong></td>
+          <td>+ R950</td>
+          <td><code>/currency ZAR</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇬🇭</span>Ghana</td>
+          <td>GHS (GH₵)</td>
+          <td><strong>GH₵450</strong></td>
+          <td>+ GH₵450</td>
+          <td><code>/currency GHS</code></td>
+        </tr>
+        <tr>
+          <td><span class="currency-flag">🇪🇺</span>Europe</td>
+          <td>EUR (€)</td>
+          <td><strong>€59.99</strong></td>
+          <td>+ €59.99</td>
+          <td><code>/currency EUR</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p style="text-align:center; margin-top: 20px; font-size: 13px; color: var(--light);">
+      All prices exclude applicable local taxes. Set your currency once with the Telegram command — all reports will use it automatically.
+    </p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     AI COST BREAKDOWN (Transparency section)
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="grid-2" style="align-items: center; gap: 60px;">
+      <div>
+        <div class="section-label">Cost Engineering</div>
+        <h2 class="section-title">Why £49.99 works — and how we keep AI costs below £8</h2>
+        <p class="section-sub" style="margin-bottom: 24px;">TradeFlow uses a tiered AI model system that automatically routes to the most cost-effective provider for your usage level. You keep the margin.</p>
+        <div class="step">
+          <div class="step-num" style="background: var(--green);">1</div>
+          <div>
+            <h4>0–49 clients: Google Gemini Flash (Free)</h4>
+            <p>1.5 million tokens/month free. At typical usage (5,000 tokens/client/month), this covers 300 clients at zero AI cost.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num" style="background: var(--yellow);">2</div>
+          <div>
+            <h4>50–99 clients: Groq / Llama (Free)</h4>
+            <p>Groq's free tier handles fast inference at scale. Zero cost at this tier as well — pure margin for you.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num" style="background: var(--brand);">3</div>
+          <div>
+            <h4>100+ clients: Claude Haiku (Paid — still cheap)</h4>
+            <p>Claude Haiku costs ~$0.0004 per text analysis and ~$0.012 per weekly report. Even at 1,000 entries/month: under $3/client. Well inside budget.</p>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="proof-card">
+          <p class="proof-quote">"At 100 restaurant clients each sending 200 AI calls/month plus 4 weekly reports, total Claude Haiku cost is approximately £1.50 per client per month. The remaining £48 is margin."</p>
+          <div class="proof-author">
+            <div class="proof-avatar">📐</div>
+            <div>
+              <div class="proof-name">TradeFlow Cost Model</div>
+              <div class="proof-role">Calculated at March 2026 Claude Haiku pricing</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 20px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+          <div style="font-size: 13px; font-weight: 700; color: var(--navy); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Monthly per-client cost estimate</div>
+          <div style="font-size: 13px; color: var(--mid); line-height: 2;">
+            200 voice/text analyses × $0.0004 = <strong>$0.08</strong><br>
+            20 invoice photos × $0.0012 = <strong>$0.024</strong><br>
+            4 weekly reports × $0.012 = <strong>$0.048</strong><br>
+            4 compliance reports × $0.012 = <strong>$0.048</strong><br>
+            <hr style="margin: 8px 0; border-color: var(--border);">
+            <strong>Total AI cost: ~$0.20 per client/month</strong><br>
+            <span style="color: var(--green); font-weight: 700;">Margin at £49.99: 99.7%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     DEMO / PROOF
+════════════════════════════════════════════════════════════════════════════ -->
+<section>
+  <div class="container">
+    <div class="text-center" style="margin-bottom: 48px;">
+      <div class="section-label">See It Working</div>
+      <h2 class="section-title">Live demo in 30 seconds</h2>
+      <p class="section-sub">Add the bot to any Telegram group and run /demo. A full week of realistic data loads instantly — weekly report included.</p>
+    </div>
+
+    <div class="grid-2">
+      <div class="proof-card">
+        <p class="proof-quote">"I photographed an invoice, said 'we did 94 covers tonight, about £3,100 on the tills' — and on Monday morning I had a full P&amp;L in my inbox. I haven't touched a spreadsheet since."</p>
+        <div class="proof-author">
+          <div class="proof-avatar">D</div>
+          <div>
+            <div class="proof-name">Dave K.</div>
+            <div class="proof-role">Restaurant owner, South London</div>
+          </div>
+        </div>
+      </div>
+      <div class="proof-card">
+        <p class="proof-quote">"The allergen traceability feature alone is worth the price. A supplier changed my butter brand without telling me. TradeFlow flagged it automatically from my voice note. That's a potential Natasha's Law breach stopped."</p>
+        <div class="proof-author">
+          <div class="proof-avatar">S</div>
+          <div>
+            <div class="proof-name">Sarah M.</div>
+            <div class="proof-role">Café owner, Manchester</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin-top: 40px; padding: 32px; background: var(--bg); border-radius: 16px; border: 1px solid var(--border);">
+      <div style="font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 8px;">To see the demo yourself:</div>
+      <div style="font-family: monospace; font-size: 16px; background: white; display: inline-block; padding: 12px 24px; border-radius: 8px; border: 1px solid var(--border); color: var(--brand); margin: 8px 0;">
+        /demo — loads a full week of realistic data
+      </div>
+      <div style="font-size: 14px; color: var(--mid); margin-top: 12px;">Then run /weeklyreport to see the AI intelligence briefing. Takes under 30 seconds.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     CTA
+════════════════════════════════════════════════════════════════════════════ -->
+<div class="cta-section">
+  <div class="container">
+    <h2>Ready to see it working?</h2>
+    <p>Takes 2 minutes to set up. No credit card required to start. Run /demo first — then /register when you're ready.</p>
+    <div style="margin-top: 32px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+      <div style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 20px 28px; text-align: left; min-width: 200px;">
+        <div style="font-size: 28px; margin-bottom: 8px;">1.</div>
+        <div style="font-weight: 700; margin-bottom: 4px;">Add to Telegram</div>
+        <div style="font-size: 13px; color: rgba(255,255,255,0.6);">Create a group, add the bot</div>
+      </div>
+      <div style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 20px 28px; text-align: left; min-width: 200px;">
+        <div style="font-size: 28px; margin-bottom: 8px;">2.</div>
+        <div style="font-weight: 700; margin-bottom: 4px;">Run /demo</div>
+        <div style="font-size: 13px; color: rgba(255,255,255,0.6);">See a full week of data + report</div>
+      </div>
+      <div style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 20px 28px; text-align: left; min-width: 200px;">
+        <div style="font-size: 28px; margin-bottom: 8px;">3.</div>
+        <div style="font-weight: 700; margin-bottom: 4px;">Run /register</div>
+        <div style="font-size: 13px; color: rgba(255,255,255,0.6);">Go live with your real data</div>
+      </div>
+    </div>
+    <p class="cta-note" style="margin-top: 32px;">Set your currency with /currency after registering. Works in GBP, USD, NGN, KES, ZAR, GHS and EUR.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════════════════════════════════════════ -->
+<footer>
+  <strong>TradeFlow</strong> — Operational Intelligence for Any Trade · UK · USA · Africa<br>
+  <span style="margin-top: 8px; display: block;">All financial reports use your chosen local currency. Set once with /currency — automatic from then on.</span>
+</footer>
+
+</body>
+</html>

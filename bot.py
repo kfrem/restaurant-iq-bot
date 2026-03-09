@@ -1,5 +1,5 @@
 """
-Restaurant-IQ Telegram Bot
+TradeFlow Telegram Bot
 --------------------------
 Entry point. Run with:  python bot.py
 
@@ -10,12 +10,13 @@ Handles:
   - /weeklyreport       — generate and send the weekly intelligence briefing
   - /recall [date]      — recall what was recorded on a specific date or period
   - /financials         — P&L and cashflow summary for any period
+  - /groupreport        — consolidated P&L across all registered sites (multi-site owners)
   - /outstanding        — list all unpaid invoices with due dates
   - /markpaid [id]      — mark an invoice as paid
   - /demo               — load a realistic week of demo data for client presentations
   - /demoreset          — remove all demo data from this chat
 
-UK Legal Compliance (unique to Restaurant-IQ):
+UK Legal Compliance (unique to TradeFlow):
   - /tips [period]      — tip events log (Employment (Allocation of Tips) Act 2023)
   - /tipsreport         — formal Tips Act compliance record (3-year retention duty)
   - /allergens          — allergen traceability log (Natasha's Law / FSA)
@@ -49,7 +50,8 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, SUPPORT_CHAT_ID, DEFAULT_CURRENCY_CODE, DEFAULT_CURRENCY_SYMBOL
+from dashboard import start_dashboard_server
 from database import (
     init_db,
     register_restaurant,
@@ -65,6 +67,7 @@ from database import (
     get_entries_for_period,
     get_entries_with_staff,
     get_outstanding_invoices,
+    get_invoices_for_period,
     get_invoices_due_soon,
     mark_invoice_paid,
     get_financial_summary,
@@ -96,6 +99,20 @@ from database import (
     get_staff_entry_counts,
     get_eightysix_trends,
     delete_entries_older_than,
+    set_stock_par,
+    update_stock_count,
+    get_stock_status,
+    get_low_stock_items,
+    delete_stock_item,
+    add_rota_shift,
+    get_rota_for_week,
+    delete_rota_shift,
+    copy_rota_week,
+    clear_rota_week,
+    get_or_create_dashboard_token,
+    get_restaurant_currency,
+    set_restaurant_currency,
+    SUPPORTED_CURRENCIES,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -119,8 +136,20 @@ PHOTO_DIR = "photo_files"
 
 URGENCY_ICONS = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 
-# Regex to extract monetary amounts like £450, £1,200, 1200, 1200.50
-_re_amount = re.compile(r"£?([\d,]+(?:\.\d{1,2})?)")
+# Regex to extract monetary amounts like £450, $450, ₦450, 1200, 1200.50
+_re_amount = re.compile(r"[£$€₦R]?([\d,]+(?:\.\d{1,2})?)")
+
+
+def _cs(restaurant) -> str:
+    """Return the currency symbol for this restaurant (e.g. £, $, ₦).
+    Works with both sqlite3.Row objects and plain dicts."""
+    if restaurant is None:
+        return DEFAULT_CURRENCY_SYMBOL
+    try:
+        sym = restaurant["currency_symbol"]
+        return sym if sym else DEFAULT_CURRENCY_SYMBOL
+    except (KeyError, TypeError, IndexError):
+        return DEFAULT_CURRENCY_SYMBOL
 
 for _d in [REPORTS_DIR, VOICE_DIR, PHOTO_DIR]:
     os.makedirs(_d, exist_ok=True)
@@ -302,10 +331,11 @@ def _auto_log_compliance(restaurant_id: int, entry_id: int, analysis: dict, entr
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome to Restaurant-IQ!\n\n"
+        "Welcome to TradeFlow!\n\n"
         "I capture operational data from your team and turn it into weekly intelligence briefings.\n\n"
         "SETUP:\n"
-        "  /register YourRestaurantName — Register this group\n\n"
+        "  /register YourBusinessName — Register this group\n"
+        "  /currency USD              — Set your currency (GBP, USD, NGN, KES, ZAR, GHS...)\n\n"
         "DAILY USE (just send me):\n"
         "  Voice note — Shift update, observations, issues\n"
         "  Photo       — Invoice, receipt, delivery note\n"
@@ -315,34 +345,46 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /history               — Browse past weekly reports\n"
         "  /today                 — Everything logged today\n"
         "  /financials            — Revenue, costs, labour and net margin\n"
+        "  /groupreport           — Consolidated P&L across ALL your sites\n"
+        "  /stock                 — Stock levels vs par (all items)\n"
+        "  /stock low             — Only items below par level\n"
+        "  /stock set item 10 kg  — Set par level for an item\n"
+        "  /stock count item 3 kg — Log current stock count\n"
+        "  /rota                  — Show this week's staff rota\n"
+        "  /rota add Mon John 9am-5pm — Add a shift to the rota\n"
+        "  /rota copy             — Copy last week's rota to this week\n"
+        "  /rota next             — View next week's rota\n"
+        "  /dashboard             — Get your private live web dashboard link\n"
         "  /recall 5 May          — What happened on a specific date\n"
         "  /recall last week      — Summary of last week\n"
         "  /recall March          — Everything recorded in March\n"
         "  /status                — Entries captured this week\n\n"
         "COSTS & LABOUR:\n"
-        "  /labour £450 wages Mon — Record wages or labour costs\n"
+        "  /labour 450 wages Mon  — Record wages or labour costs\n"
         "  /outstanding           — List unpaid invoices\n"
         "  /markpaid 12           — Mark invoice #12 as paid\n\n"
         "TEAM & MENU:\n"
         "  /teamstats             — Who's contributing and how much\n"
-        "  /eightysix             — Most frequently 86'd menu items\n\n"
-        "UK LEGAL COMPLIANCE:\n"
+        "  /eightysix             — Most frequently 86'd items\n\n"
+        "COMPLIANCE (Restaurant Pack):\n"
         "  /tips                  — Tips log (Tips Act 2023)\n"
         "  /tipsreport            — Formal tip allocation record\n"
         "  /allergens             — Allergen traceability log (Natasha's Law)\n"
         "  /inspection            — FSA inspection readiness report\n\n"
         "DATA MANAGEMENT:\n"
-        "  /rename NewName        — Rename your restaurant\n"
+        "  /rename NewName        — Rename your business\n"
         "  /import [dates]: [description] — Import any historical period\n"
-        "  /export                — Export entries as CSV (for Excel/accountants)\n"
+        "  /export                — Export entries as CSV (Excel/accountants)\n"
+        "  /export xero           — Xero Bills import CSV (purchase invoices)\n"
+        "  /export sage           — Sage 50 purchase journal CSV\n"
+        "  /export payroll        — Labour cost sheet (BrightPay/Sage Payroll)\n"
         "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
         "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
         "HELP & SUPPORT:\n"
-        "  /ask [question]        — AI-powered help (anything about the bot)\n"
+        "  /ask [question]        — AI-powered help\n"
         "  /support [message]     — Contact the support team\n"
         "  /supportstatus         — Check your support tickets\n\n"
         "Every message from any team member in this group is captured and analysed.\n"
-        "Tips and allergen risks are detected and logged automatically.\n"
         "Weekly reports are sent automatically every Monday at 08:00.\n\n"
         "Type /features for a full guide, or /ask [your question] for instant help."
     )
@@ -392,8 +434,9 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _do_register(name, chat_id, user_id, update.effective_user.first_name)
         context.user_data["reg_chat_id"] = chat_id
         await update.message.reply_text(
-            f"*{name}* is now registered and your bot is live!\n\n"
+            f"*{name}* is now registered and TradeFlow is live!\n\n"
             f"Team members can start sending voice notes, photos and texts right away.\n\n"
+            f"Tip: run /currency to set your local currency (default: GBP).\n\n"
             f"─────────────────────\n"
             f"*Optional: Complete your company profile*\n"
             f"Adding your details means they appear on every report.\n\n"
@@ -406,10 +449,10 @@ async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # No name given — ask for it
     await update.message.reply_text(
-        "*Welcome to Restaurant-IQ!*\n\n"
+        "*Welcome to TradeFlow!*\n\n"
         "Let's get you set up. This takes about 2 minutes.\n"
         "You can skip any optional step.\n\n"
-        "*What is your restaurant or business trading name?*",
+        "*What is your business trading name?*",
         parse_mode="Markdown",
     )
     context.user_data["reg_chat_id"] = chat_id
@@ -435,8 +478,9 @@ async def _reg_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _do_register(name, chat_id, user_id, update.effective_user.first_name)
 
     await update.message.reply_text(
-        f"*{name}* is now registered and your bot is live!\n\n"
+        f"*{name}* is now registered and TradeFlow is live!\n\n"
         f"Team members can start sending voice notes, photos and texts right away.\n\n"
+        f"Tip: run /currency to set your local currency (default: GBP).\n\n"
         f"─────────────────────\n"
         f"*Optional: Complete your company profile*\n"
         f"Adding details means they appear on every report.\n\n"
@@ -569,7 +613,7 @@ async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*What to do next:*\n"
         f"  • Send a voice note about today's shift\n"
         f"  • Send a photo of an invoice\n"
-        f"  • Type /features to see everything the bot can do",
+        f"  • Type /features to see everything TradeFlow can do",
         parse_mode="Markdown",
     )
     context.user_data.clear()
@@ -641,7 +685,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"Restaurant-IQ — {restaurant['name']}\n"
+        f"TradeFlow — {restaurant['name']}\n"
         f"Week from: {week_start_str}\n\n"
         f"Entries captured: {len(entries)}\n"
         f"By category:\n{cat_summary}\n\n"
@@ -823,7 +867,7 @@ async def cmd_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(entry)
 
-    report_text = generate_weekly_report(entries_data, restaurant["name"], financials)
+    report_text = generate_weekly_report(entries_data, restaurant["name"], financials, _cs(restaurant))
 
     save_weekly_report(restaurant["id"], week_start, week_end, report_text)
 
@@ -961,17 +1005,18 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     period_label = _fmt_date(start_date) if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+    sym = _cs(restaurant)
     cost_lines = ""
     if fin["cost_items"]:
         cost_lines = "\nInvoices captured:\n" + "\n".join(
-            f"  {item['date']}  {item['supplier']:.<30} £{item['amount']:>8,.2f}"
+            f"  {item['date']}  {item['supplier']:.<30} {sym}{item['amount']:>8,.2f}"
             for item in fin["cost_items"]
         )
 
     labour_lines = ""
     if fin.get("labour_items"):
         labour_lines = "\nLabour recorded:\n" + "\n".join(
-            f"  {item['date']}  {(item['description'] or 'Labour'):.<30} £{item['amount']:>8,.2f}"
+            f"  {item['date']}  {(item['description'] or 'Labour'):.<30} {sym}{item['amount']:>8,.2f}"
             for item in fin["labour_items"]
         )
 
@@ -989,12 +1034,12 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
     outstanding = get_outstanding_invoices(restaurant["id"])
     outstanding_total = sum(inv["total_amount"] or 0 for inv in outstanding)
     outstanding_line = (
-        f"\nOutstanding invoices (unpaid): {len(outstanding)} totalling £{outstanding_total:,.2f}"
+        f"\nOutstanding invoices (unpaid): {len(outstanding)} totalling {sym}{outstanding_total:,.2f}"
         if outstanding else "\nAll captured invoices: paid ✅"
     )
 
     labour_note = (
-        f"\nLabour costs:            £{fin['labour_total']:>10,.2f}"
+        f"\nLabour costs:            {sym}{fin['labour_total']:>10,.2f}"
         if fin.get("labour_total", 0) > 0
         else "\nLabour costs:               not recorded — use /labour to add"
     )
@@ -1003,11 +1048,11 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Financial Summary — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 40}\n\n"
-        f"Revenue captured:        £{fin['revenue_total']:>10,.2f}\n"
-        f"Invoiced costs captured: £{fin['cost_total']:>10,.2f}\n"
+        f"Revenue captured:        {sym}{fin['revenue_total']:>10,.2f}\n"
+        f"Invoiced costs captured: {sym}{fin['cost_total']:>10,.2f}\n"
         f"{labour_note}\n"
         f"{'─' * 40}\n"
-        f"Net profit:              £{fin['gross_profit']:>10,.2f}\n"
+        f"Net profit:              {sym}{fin['gross_profit']:>10,.2f}\n"
         f"Food GP margin:          {food_margin:>9.1f}%\n"
         f"Net margin (inc labour): {net_margin:>9.1f}%\n"
         f"{margin_note}"
@@ -1016,6 +1061,651 @@ async def cmd_financials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{labour_lines}\n\n"
         f"Note: revenue = reported takings. Costs = photographed invoices.\n"
         f"Labour = entries via /labour. Use /labour £X [description] to record wages."
+    )
+
+
+async def cmd_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /stock                        — show all stock levels vs par
+    /stock low                    — show only items below par
+    /stock set chicken 10 kg      — set par level for an item
+    /stock count chicken 3 kg     — record current stock count
+    /stock remove chicken         — remove an item from the list
+
+    Examples:
+      /stock set beef mince 5 kg
+      /stock set milk 12 litres
+      /stock count beef mince 2 kg
+      /stock low
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    args = list(context.args) if context.args else []
+    rid = restaurant["id"]
+
+    def _parse_item_amount(tokens):
+        """
+        Parse 'chicken 3 kg' or 'chicken 3kg' or 'beef mince 2.5 kg'
+        into (item_name, amount, unit).
+        Handles multi-word item names by treating the last numeric token
+        (plus optional trailing unit) as the amount.
+        """
+        if not tokens:
+            return None, None, ""
+        # Walk backwards to find the first numeric token
+        unit = ""
+        amount = None
+        name_end = len(tokens)
+        for i in range(len(tokens) - 1, -1, -1):
+            tok = tokens[i]
+            # Strip trailing unit letters from the token e.g. "3kg" → "3"
+            num_part = tok.rstrip("abcdefghijklmnopqrstuvwxyz")
+            unit_part = tok[len(num_part):]
+            try:
+                amount = float(num_part)
+                if unit_part:
+                    unit = unit_part
+                elif i + 1 < len(tokens):
+                    # next token might be the unit if it's purely alphabetic
+                    next_tok = tokens[i + 1]
+                    if next_tok.isalpha() and not _is_numeric(next_tok):
+                        unit = next_tok
+                        name_end = i
+                    else:
+                        name_end = i
+                else:
+                    name_end = i
+                break
+            except ValueError:
+                continue
+        if amount is None:
+            return " ".join(tokens), None, ""
+        item_name = " ".join(tokens[:name_end])
+        return item_name.strip(), amount, unit.strip()
+
+    def _is_numeric(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    subcommand = args[0].lower() if args else "status"
+
+    # ── /stock set <item> <amount> [unit] ─────────────────────────────────────
+    if subcommand == "set":
+        item_name, par_level, unit = _parse_item_amount(args[1:])
+        if not item_name or par_level is None:
+            await update.message.reply_text(
+                "Usage: /stock set chicken 10 kg\n"
+                "Multi-word: /stock set beef mince 5 kg"
+            )
+            return
+        set_stock_par(rid, item_name, par_level, unit)
+        unit_str = f" {unit}" if unit else ""
+        await update.message.reply_text(
+            f"Par level set: {item_name.title()} — {par_level:g}{unit_str}\n\n"
+            f"Now log counts with: /stock count {item_name} <amount>{unit_str}"
+        )
+
+    # ── /stock count <item> <amount> [unit] ───────────────────────────────────
+    elif subcommand in ("count", "update"):
+        item_name, current_level, unit = _parse_item_amount(args[1:])
+        if not item_name or current_level is None:
+            await update.message.reply_text(
+                "Usage: /stock count chicken 3 kg\n"
+                "Item must have a par level set first: /stock set chicken 10 kg"
+            )
+            return
+        updated = update_stock_count(rid, item_name, current_level)
+        if not updated:
+            # Item not found — offer to create it
+            await update.message.reply_text(
+                f"'{item_name}' not found in your stock list.\n"
+                f"Set a par level first: /stock set {item_name} <par_amount>"
+            )
+            return
+        # Fetch the item to check against par
+        items = get_stock_status(rid)
+        item = next((i for i in items if i["item_name"] == item_name.lower().strip()), None)
+        unit_str = f" {item['unit']}" if item and item["unit"] else ""
+        par = item["par_level"] if item else 0
+        if current_level < par:
+            deficit = par - current_level
+            await update.message.reply_text(
+                f"Stock updated: {item_name.title()} — {current_level:g}{unit_str}\n"
+                f"⚠️ BELOW PAR — need {deficit:g}{unit_str} more (par: {par:g}{unit_str})"
+            )
+        else:
+            surplus = current_level - par
+            await update.message.reply_text(
+                f"Stock updated: {item_name.title()} — {current_level:g}{unit_str} ✅\n"
+                f"Above par by {surplus:g}{unit_str} (par: {par:g}{unit_str})"
+            )
+
+    # ── /stock remove <item> ──────────────────────────────────────────────────
+    elif subcommand == "remove":
+        item_name = " ".join(args[1:]).strip()
+        if not item_name:
+            await update.message.reply_text("Usage: /stock remove chicken")
+            return
+        deleted = delete_stock_item(rid, item_name)
+        if deleted:
+            await update.message.reply_text(f"Removed '{item_name}' from stock list.")
+        else:
+            await update.message.reply_text(f"'{item_name}' not found in your stock list.")
+
+    # ── /stock low ────────────────────────────────────────────────────────────
+    elif subcommand == "low":
+        low_items = get_low_stock_items(rid)
+        if not low_items:
+            await update.message.reply_text(
+                "No items below par level. All stock looks good. ✅\n\n"
+                "Note: items without a count recorded will not appear here.\n"
+                "Log counts with: /stock count <item> <amount>"
+            )
+            return
+        lines = []
+        for item in low_items:
+            unit_str = f" {item['unit']}" if item["unit"] else ""
+            deficit = item["par_level"] - item["current_level"]
+            lines.append(
+                f"⚠️ {item['item_name'].title()}\n"
+                f"   Have: {item['current_level']:g}{unit_str}  |  "
+                f"Par: {item['par_level']:g}{unit_str}  |  "
+                f"Need: {deficit:g}{unit_str}"
+            )
+        await update.message.reply_text(
+            f"Low Stock — {restaurant['name']}\n"
+            f"{'─' * 36}\n" +
+            "\n".join(lines) +
+            f"\n{'─' * 36}\n"
+            f"{len(low_items)} item(s) below par level.\n"
+            "Order these before next service."
+        )
+
+    # ── /stock (status — show all) ────────────────────────────────────────────
+    else:
+        items = get_stock_status(rid)
+        if not items:
+            await update.message.reply_text(
+                "No stock items set up yet.\n\n"
+                "Start by setting par levels:\n"
+                "/stock set chicken 10 kg\n"
+                "/stock set milk 12 litres\n"
+                "/stock set burger buns 48\n\n"
+                "Then log counts:\n"
+                "/stock count chicken 3 kg"
+            )
+            return
+
+        ok_lines, low_lines, uncount_lines = [], [], []
+        for item in items:
+            unit_str = f" {item['unit']}" if item["unit"] else ""
+            par_str = f"{item['par_level']:g}{unit_str}"
+            if item["current_level"] is None:
+                uncount_lines.append(f"  ○ {item['item_name'].title():<25} par: {par_str}")
+            elif item["current_level"] < item["par_level"]:
+                deficit = item["par_level"] - item["current_level"]
+                low_lines.append(
+                    f"  ⚠️ {item['item_name'].title():<23} "
+                    f"{item['current_level']:g}{unit_str} / {par_str}  (need {deficit:g}{unit_str})"
+                )
+            else:
+                ok_lines.append(
+                    f"  ✅ {item['item_name'].title():<23} "
+                    f"{item['current_level']:g}{unit_str} / {par_str}"
+                )
+
+        sections = []
+        if low_lines:
+            sections.append("BELOW PAR — order now:\n" + "\n".join(low_lines))
+        if ok_lines:
+            sections.append("OK:\n" + "\n".join(ok_lines))
+        if uncount_lines:
+            sections.append("NOT YET COUNTED:\n" + "\n".join(uncount_lines))
+
+        last_count = next(
+            (i["last_count_date"] for i in items if i["last_count_date"]), None
+        )
+        count_note = f"Last count: {_fmt_date(last_count)}" if last_count else "No counts recorded yet"
+
+        await update.message.reply_text(
+            f"Stock Status — {restaurant['name']}\n"
+            f"{'─' * 36}\n" +
+            ("\n\n".join(sections)) +
+            f"\n{'─' * 36}\n"
+            f"{count_note}\n"
+            "Use /stock count <item> <amount> to update counts."
+        )
+
+
+def _rota_week_bounds(ref: date, offset_weeks: int = 0):
+    """Return (monday, sunday) as YYYY-MM-DD for the week containing ref + offset_weeks."""
+    monday = ref - timedelta(days=ref.weekday()) + timedelta(weeks=offset_weeks)
+    sunday = monday + timedelta(days=6)
+    return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
+
+
+def _parse_rota_day(token: str, ref: date) -> str | None:
+    """Convert a day token ('Monday', 'Mon', 'Tue', YYYY-MM-DD, DD/MM/YYYY) to YYYY-MM-DD.
+    Day names resolve to the current week (Mon-Sun)."""
+    token = token.strip().lower()
+    monday = ref - timedelta(days=ref.weekday())
+    day_map = {
+        "monday": 0, "mon": 0,
+        "tuesday": 1, "tue": 1, "tues": 1,
+        "wednesday": 2, "wed": 2,
+        "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+        "friday": 4, "fri": 4,
+        "saturday": 5, "sat": 5,
+        "sunday": 6, "sun": 6,
+        "today": ref.weekday(),
+        "tomorrow": (ref + timedelta(days=1)).weekday(),
+    }
+    if token == "today":
+        return ref.strftime("%Y-%m-%d")
+    if token == "tomorrow":
+        return (ref + timedelta(days=1)).strftime("%Y-%m-%d")
+    if token in day_map:
+        return (monday + timedelta(days=day_map[token])).strftime("%Y-%m-%d")
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(token, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_shift_time(tok: str):
+    """Parse a single time token like '9am', '17:00', '9', '9:30pm' → 'HH:MM' or None."""
+    tok = tok.strip().lower()
+    m = re.match(r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$', tok)
+    if not m:
+        return None
+    h, mins, period = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if period == "pm" and h != 12:
+        h += 12
+    elif period == "am" and h == 12:
+        h = 0
+    elif period is None and 1 <= h <= 7:
+        h += 12   # ambiguous bare numbers: treat 1-7 as pm (lunch/evening shifts)
+    return f"{h:02d}:{mins:02d}"
+
+
+def _parse_time_range(tok: str):
+    """Parse '9am-5pm', '09:00-17:00', '9-17' → ('09:00', '17:00'). Returns (start, end) or (start, None)."""
+    if "-" in tok:
+        parts = tok.split("-", 1)
+        return _parse_shift_time(parts[0]), _parse_shift_time(parts[1])
+    return _parse_shift_time(tok), None
+
+
+def _fmt_shift_time(t: str) -> str:
+    """Format stored HH:MM for display. Strips leading zero from hour."""
+    if not t:
+        return ""
+    try:
+        h, m = t.split(":")
+        return f"{int(h)}:{m}"
+    except ValueError:
+        return t
+
+
+def _rota_week_label(week_start: str, week_end: str) -> str:
+    """e.g. 'Mon 9 Mar – Sun 15 Mar 2026'"""
+    try:
+        s = datetime.strptime(week_start, "%Y-%m-%d")
+        e = datetime.strptime(week_end, "%Y-%m-%d")
+        return f"Mon {s.day} {s.strftime('%b')} – Sun {e.day} {e.strftime('%b %Y')}"
+    except ValueError:
+        return f"{week_start} to {week_end}"
+
+
+def _render_rota(shifts: list, week_start: str, week_end: str, restaurant_name: str) -> str:
+    """Build the rota display string for a week."""
+    DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    # Index shifts by date
+    by_date: dict[str, list] = {}
+    for s in shifts:
+        by_date.setdefault(s["shift_date"], []).append(s)
+
+    # Walk every day of the week
+    lines = [
+        f"Rota — {restaurant_name}",
+        f"Week: {_rota_week_label(week_start, week_end)}",
+        "─" * 40,
+    ]
+    monday = datetime.strptime(week_start, "%Y-%m-%d")
+    has_any = False
+    for i in range(7):
+        day_date = (monday + timedelta(days=i)).strftime("%Y-%m-%d")
+        day_display = (monday + timedelta(days=i)).strftime(f"{DAY_NAMES[i]} %-d %b")
+        day_shifts = by_date.get(day_date, [])
+        if day_shifts:
+            has_any = True
+            lines.append(f"\n{day_display}")
+            for s in day_shifts:
+                t_start = _fmt_shift_time(s["start_time"])
+                t_end = _fmt_shift_time(s["end_time"])
+                time_str = f"{t_start}–{t_end}" if t_end else (t_start or "—")
+                role_str = f"  ({s['role']})" if s["role"] else ""
+                lines.append(f"  {s['staff_name']:<20} {time_str:<13}  [#{s['id']}]{role_str}")
+
+    if not has_any:
+        lines.append("\n(No shifts added yet)")
+
+    lines.append("\n" + "─" * 40)
+    lines.append(f"{len(shifts)} shift(s) total")
+    lines.append("Add:    /rota add Monday Name 9am-5pm")
+    lines.append("Remove: /rota remove <#id>")
+    lines.append("Copy last week: /rota copy")
+    return "\n".join(lines)
+
+
+async def cmd_rota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rota                           — show this week's rota
+    /rota next                      — show next week's rota
+    /rota add <day> <name> <times>  — add a shift
+    /rota remove <id>               — remove a shift by ID
+    /rota copy                      — copy last week's rota to this week
+    /rota clear                     — clear all shifts this week (asks confirmation)
+    /rota clear confirm             — actually clear this week
+
+    Examples:
+      /rota add Monday John 9am-5pm
+      /rota add Tuesday Sophie 12:00-20:00
+      /rota add Wed Marcus 8-4
+      /rota remove 42
+      /rota next
+      /rota copy
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    args = list(context.args) if context.args else []
+    rid = restaurant["id"]
+    today = date.today()
+    sub = args[0].lower() if args else "show"
+
+    # ── /rota add <day> <name> <time-range> ──────────────────────────────────
+    if sub == "add":
+        if len(args) < 4:
+            await update.message.reply_text(
+                "Usage: /rota add <day> <name> <times>\n\n"
+                "Examples:\n"
+                "  /rota add Monday John 9am-5pm\n"
+                "  /rota add Tuesday Sophie 12:00-20:00\n"
+                "  /rota add Wed Marcus 8-16\n\n"
+                "Days: Monday Mon Tue Wed Thu Fri Sat Sun today tomorrow"
+            )
+            return
+
+        day_token = args[1]
+        shift_date = _parse_rota_day(day_token, today)
+        if not shift_date:
+            await update.message.reply_text(
+                f"Couldn't understand day '{day_token}'.\n"
+                "Use: Monday, Mon, Tue, Wed, Thu, Fri, Sat, Sun, today, tomorrow"
+            )
+            return
+
+        # Last arg is time range, everything between is the name
+        time_token = args[-1]
+        start_time, end_time = _parse_time_range(time_token)
+        if start_time is None:
+            await update.message.reply_text(
+                f"Couldn't understand time '{time_token}'.\n"
+                "Try: 9am-5pm  or  09:00-17:00  or  9-17"
+            )
+            return
+
+        staff_name = " ".join(args[2:-1]).strip()
+        if not staff_name:
+            await update.message.reply_text(
+                "Please include a name: /rota add Monday John 9am-5pm"
+            )
+            return
+
+        shift_id = add_rota_shift(rid, shift_date, staff_name, start_time, end_time or "")
+        day_fmt = datetime.strptime(shift_date, "%Y-%m-%d").strftime("%-d %b (%A)")
+        t_start = _fmt_shift_time(start_time)
+        t_end = _fmt_shift_time(end_time) if end_time else ""
+        time_display = f"{t_start}–{t_end}" if t_end else t_start
+        await update.message.reply_text(
+            f"Shift added ✅\n"
+            f"{staff_name} — {day_fmt} — {time_display}  [#{shift_id}]\n\n"
+            "View rota: /rota\n"
+            "Remove: /rota remove " + str(shift_id)
+        )
+
+    # ── /rota remove <id> ────────────────────────────────────────────────────
+    elif sub == "remove":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /rota remove <id>  (ID shown in [#..] on the rota)")
+            return
+        try:
+            shift_id = int(args[1].lstrip("#"))
+        except ValueError:
+            await update.message.reply_text(f"'{args[1]}' is not a valid shift ID.")
+            return
+        deleted = delete_rota_shift(shift_id, rid)
+        if deleted:
+            await update.message.reply_text(f"Shift #{shift_id} removed.")
+        else:
+            await update.message.reply_text(
+                f"Shift #{shift_id} not found (may already be deleted or belong to another group)."
+            )
+
+    # ── /rota copy ───────────────────────────────────────────────────────────
+    elif sub == "copy":
+        last_start, last_end = _rota_week_bounds(today, offset_weeks=-1)
+        this_start, this_end = _rota_week_bounds(today)
+        # Check destination isn't already populated
+        existing = get_rota_for_week(rid, this_start, this_end)
+        if existing:
+            await update.message.reply_text(
+                f"This week already has {len(existing)} shift(s).\n"
+                "Clear this week first with /rota clear confirm, then /rota copy."
+            )
+            return
+        copied = copy_rota_week(rid, last_start, last_end, this_start)
+        if copied == 0:
+            await update.message.reply_text(
+                "Last week had no shifts to copy.\n"
+                "Add shifts with: /rota add Monday Name 9am-5pm"
+            )
+            return
+        await update.message.reply_text(
+            f"Copied {copied} shift(s) from last week to this week. ✅\n\n"
+            "View: /rota\n"
+            "Remove individual shifts with /rota remove <id>"
+        )
+
+    # ── /rota clear [confirm] ─────────────────────────────────────────────────
+    elif sub == "clear":
+        this_start, this_end = _rota_week_bounds(today)
+        confirmed = len(args) > 1 and args[1].lower() == "confirm"
+        if not confirmed:
+            existing = get_rota_for_week(rid, this_start, this_end)
+            await update.message.reply_text(
+                f"This will delete all {len(existing)} shift(s) for this week.\n\n"
+                "To confirm: /rota clear confirm"
+            )
+            return
+        deleted = clear_rota_week(rid, this_start, this_end)
+        await update.message.reply_text(f"Cleared {deleted} shift(s) from this week.")
+
+    # ── /rota next ────────────────────────────────────────────────────────────
+    elif sub == "next":
+        week_start, week_end = _rota_week_bounds(today, offset_weeks=1)
+        shifts = get_rota_for_week(rid, week_start, week_end)
+        await update.message.reply_text(_render_rota(shifts, week_start, week_end, restaurant["name"]))
+
+    # ── /rota (show this week) ────────────────────────────────────────────────
+    else:
+        week_start, week_end = _rota_week_bounds(today)
+        shifts = get_rota_for_week(rid, week_start, week_end)
+        await update.message.reply_text(_render_rota(shifts, week_start, week_end, restaurant["name"]))
+
+
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /dashboard — get a private link to your restaurant's live web dashboard.
+    The link shows rota, stock, invoices, financials and recent activity.
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    token = get_or_create_dashboard_token(restaurant["id"])
+
+    # Build the base URL from RAILWAY_PUBLIC_DOMAIN env var if set, else generic instructions
+    base_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if base_url:
+        url = f"https://{base_url}/dashboard/{token}"
+        await update.message.reply_text(
+            f"Your live dashboard:\n{url}\n\n"
+            "Bookmark it — it shows:\n"
+            "  • This week's rota\n"
+            "  • Stock levels (red = low)\n"
+            "  • Outstanding invoices\n"
+            "  • Month-to-date P&L\n"
+            "  • Recent activity & 86 list\n\n"
+            "The page auto-refreshes every 60 seconds.\n"
+            "Keep this link private — anyone with it can view your data."
+        )
+    else:
+        await update.message.reply_text(
+            f"Dashboard token: {token}\n\n"
+            "Your dashboard is available at:\n"
+            "  http://<your-server>/dashboard/" + token + "\n\n"
+            "On Railway: set RAILWAY_PUBLIC_DOMAIN in Variables for a clean URL.\n\n"
+            "The dashboard shows rota, stock, invoices, P&L and recent activity.\n"
+            "Keep this link private — anyone with it can view your data."
+        )
+
+
+async def cmd_groupreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /groupreport [period]
+
+    Consolidated P&L across ALL restaurants registered to this bot instance.
+    Useful for franchise/multi-site owners running their own bot.
+
+    Examples:
+      /groupreport              — this month
+      /groupreport last month   — previous calendar month
+      /groupreport March 2026   — specific month
+    """
+    # Must be in a registered group or the support chat — give a helpful message otherwise
+    chat_id = str(update.effective_chat.id)
+    calling_restaurant = get_restaurant_by_group(chat_id)
+
+    query = " ".join(context.args).strip() if context.args else "this month"
+    date_range = _parse_date_range(query)
+
+    if not date_range:
+        await update.message.reply_text(
+            f"Couldn't understand period \"{query}\".\n"
+            "Try: this month, last month, March 2026"
+        )
+        return
+
+    start_date, end_date = date_range
+    period_label = (
+        _fmt_date(start_date) if start_date == end_date
+        else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
+    )
+
+    all_restaurants = get_all_restaurants()
+    if not all_restaurants:
+        await update.message.reply_text("No restaurants registered yet.")
+        return
+
+    # Gather financials for every site
+    sites = []
+    for r in all_restaurants:
+        fin = get_financial_summary(r["id"], start_date, end_date)
+        sites.append({
+            "name": r["name"],
+            "revenue": fin["revenue_total"],
+            "costs": fin["cost_total"],
+            "labour": fin["labour_total"],
+            "profit": fin["gross_profit"],
+            "food_margin": fin["food_margin_pct"],
+            "net_margin": fin["net_margin_pct"],
+        })
+
+    # Filter to sites that have any data
+    active_sites = [s for s in sites if s["revenue"] > 0 or s["costs"] > 0 or s["labour"] > 0]
+
+    if not active_sites:
+        await update.message.reply_text(
+            f"No financial data found for {period_label} across any of the "
+            f"{len(all_restaurants)} registered restaurant(s).\n\n"
+            "Revenue is captured from voice/text updates mentioning takings.\n"
+            "Costs are captured when invoice photos are sent.\n"
+            "Labour is recorded via /labour."
+        )
+        return
+
+    # Group totals
+    total_revenue = sum(s["revenue"] for s in active_sites)
+    total_costs = sum(s["costs"] for s in active_sites)
+    total_labour = sum(s["labour"] for s in active_sites)
+    total_profit = sum(s["profit"] for s in active_sites)
+    group_net_margin = round(total_profit / total_revenue * 100, 1) if total_revenue else 0.0
+    group_food_margin = (
+        round((total_revenue - total_costs) / total_revenue * 100, 1) if total_revenue else 0.0
+    )
+
+    # Per-site breakdown lines
+    divider = "─" * 44
+    site_lines = []
+    for s in active_sites:
+        margin_flag = ""
+        if s["net_margin"] < 5:
+            margin_flag = " ⚠️"
+        elif s["net_margin"] >= 15:
+            margin_flag = " ✅"
+        sym = _cs(restaurant)
+        site_lines.append(
+            f"\n{s['name']}\n"
+            f"  Revenue:  {sym}{s['revenue']:>9,.2f}  |  Costs: {sym}{s['costs']:>8,.2f}\n"
+            f"  Labour:   {sym}{s['labour']:>9,.2f}  |  Profit: {sym}{s['profit']:>7,.2f}\n"
+            f"  Food GP: {s['food_margin']:>5.1f}%   |  Net: {s['net_margin']:>5.1f}%{margin_flag}"
+        )
+
+    sym = _cs(restaurant)
+    context_note = (
+        f"\n\n(Showing {len(active_sites)} of {len(all_restaurants)} site(s) — "
+        f"{len(all_restaurants) - len(active_sites)} have no data this period)"
+        if len(active_sites) < len(all_restaurants) else ""
+    )
+
+    await update.message.reply_text(
+        f"Group Report — All Sites\n"
+        f"Period: {period_label}\n"
+        f"{divider}\n"
+        f"GROUP TOTALS\n"
+        f"  Revenue:         {sym}{total_revenue:>10,.2f}\n"
+        f"  Invoiced costs:  {sym}{total_costs:>10,.2f}\n"
+        f"  Labour:          {sym}{total_labour:>10,.2f}\n"
+        f"  {divider[:30]}\n"
+        f"  Net profit:      {sym}{total_profit:>10,.2f}\n"
+        f"  Food GP margin:  {group_food_margin:>9.1f}%\n"
+        f"  Net margin:      {group_net_margin:>9.1f}%\n"
+        f"{divider}\n"
+        f"PER SITE BREAKDOWN"
+        + "".join(site_lines)
+        + f"\n{divider}"
+        + context_note
+        + "\n\nUse /export xero or /export sage per site for accounting imports."
     )
 
 
@@ -1059,15 +1749,17 @@ async def cmd_outstanding(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             flag = "No due date"
 
-        lines.append(f"#{inv['id']}  {(inv['supplier_name'] or 'Unknown'):.<25} £{amount:>8,.2f}  {flag}")
+        sym = _cs(restaurant)
+        lines.append(f"#{inv['id']}  {(inv['supplier_name'] or 'Unknown'):.<25} {sym}{amount:>8,.2f}  {flag}")
 
     invoices_text = "\n".join(lines)
+    sym = _cs(restaurant)
     await update.message.reply_text(
         f"Outstanding Invoices — {restaurant['name']}\n"
         f"{'─' * 40}\n"
         f"{invoices_text}\n"
         f"{'─' * 40}\n"
-        f"Total outstanding: £{total:,.2f}\n\n"
+        f"Total outstanding: {sym}{total:,.2f}\n\n"
         f"To mark an invoice as paid: /markpaid [id]\n"
         f"Example: /markpaid {invoices[0]['id']}"
     )
@@ -1105,9 +1797,10 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    sym = _cs(restaurant)
     if inv["paid"]:
         await update.message.reply_text(
-            f"Invoice #{invoice_id} ({inv['supplier_name']}, £{inv['total_amount']:.2f}) "
+            f"Invoice #{invoice_id} ({inv['supplier_name']}, {sym}{inv['total_amount']:.2f}) "
             f"was already marked paid on {inv['paid_date']}."
         )
         return
@@ -1186,7 +1879,7 @@ async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_all_entries(restaurant["id"])
     await update.message.reply_text(
         f"All data cleared for {restaurant['name']}.\n\n"
-        f"Your registration is intact — the bot will continue capturing new messages.\n"
+        f"Your registration is intact — TradeFlow will continue capturing new messages.\n"
         f"Use /import to backfill historical data if needed."
     )
 
@@ -1209,12 +1902,12 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Ask me anything about the bot.\n\n"
+            "Ask anything about TradeFlow.\n\n"
             "Examples:\n"
             "  /ask how do I fix a wrong entry?\n"
             "  /ask how do I record tips from last week?\n"
             "  /ask what is the best way to get the weekly report?\n"
-            "  /ask how do I import data from before I started using the bot?\n"
+            "  /ask how do I import data from before I started using TradeFlow?\n"
             "  /ask what does the inspection report cover?"
         )
         return
@@ -1416,7 +2109,7 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /support [message]
-    Send a message to the Restaurant-IQ support team.
+    Send a message to the TradeFlow support team.
     They will reply directly in this group when the issue is resolved.
 
     Examples:
@@ -1541,7 +2234,7 @@ async def cmd_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Support update for ticket #{ticket_id}\n"
                 f"{'─' * 30}\n\n"
                 f"Your issue: {ticket['message']}\n\n"
-                f"Response from the Restaurant-IQ team:\n{reply_text}\n\n"
+                f"Response from the TradeFlow team:\n{reply_text}\n\n"
                 f"If this resolves your issue, no further action needed.\n"
                 f"If not, use /support to send a follow-up."
             ),
@@ -1595,12 +2288,13 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    sym = _cs(restaurant)
     lines = []
     for t in events:
         amount = t["gross_amount"] or 0
         tip_type = (t["tip_type"] or "unknown").upper()
         shift = t["shift"] or "unspecified shift"
-        lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  £{amount:.2f}  ({shift})")
+        lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  {sym}{amount:.2f}  ({shift})")
 
     events_text = "\n".join(lines)
 
@@ -1608,11 +2302,11 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Tips Log — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 40}\n\n"
-        f"Card tips:    £{summary['card']:>8,.2f}\n"
-        f"Cash tips:    £{summary['cash']:>8,.2f}\n"
-        f"Unknown type: £{summary['unknown']:>8,.2f}\n"
+        f"Card tips:    {sym}{summary['card']:>8,.2f}\n"
+        f"Cash tips:    {sym}{summary['cash']:>8,.2f}\n"
+        f"Unknown type: {sym}{summary['unknown']:>8,.2f}\n"
         f"{'─' * 40}\n"
-        f"Total:        £{summary['total']:>8,.2f}\n\n"
+        f"Total:        {sym}{summary['total']:>8,.2f}\n\n"
         f"Events ({len(events)}):\n{events_text}\n\n"
         f"Legal requirement: 100% of tips must be passed to staff.\n"
         f"Records must be kept for 3 years (Tips Act 2023).\n"
@@ -1651,13 +2345,14 @@ async def cmd_tipsreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = f"{_fmt_date(start_date)} to {_fmt_date(end_date)}" if start_date != end_date else _fmt_date(start_date)
 
+    sym = _cs(restaurant)
     await update.message.reply_text(
         f"Generating Tips Act compliance record for {period_label}...\n"
-        f"({len(events)} events, £{summary['total']:.2f} total)"
+        f"({len(events)} events, {sym}{summary['total']:.2f} total)"
     )
 
     events_as_dicts = [dict(e) for e in events]
-    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label)
+    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label, sym)
 
     header = (
         f"TIPS ACT COMPLIANCE RECORD\n"
@@ -1848,10 +2543,10 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Message 1: What you can send
     await update.message.reply_text(
-        "RESTAURANT-IQ — WHAT THIS BOT DOES\n"
+        "RESTAURANT IQ — HOW IT WORKS\n"
         "════════════════════════════════════\n\n"
         "Your team sends messages to this group as normal.\n"
-        "The bot reads every message, extracts the useful data,\n"
+        "TradeFlow reads every message, extracts the useful data,\n"
         "and builds a picture of your restaurant's week.\n"
         "No forms. No spreadsheets. Just talk.\n\n"
         "────────────────────────────────────\n"
@@ -1873,7 +2568,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Works for: supplier invoices, delivery dockets, utility bills, repair invoices.\n"
         "Best results: photo flat, good light, all four corners visible.\n\n"
         "3. TEXT MESSAGES\n"
-        "Type anything — the bot captures and categorises it.\n\n"
+        "Type anything — TradeFlow captures and categorises it.\n\n"
         "Examples:\n"
         "  \"Butcher raised beef prices by 9% this week\"\n"
         "  \"Ahmed was 40 mins late — third time this month\"\n"
@@ -1883,7 +2578,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Message 2: What gets extracted + limitations
     await update.message.reply_text(
-        "WHAT THE BOT EXTRACTS AUTOMATICALLY\n"
+        "WHAT RESTAURANT IQ EXTRACTS AUTOMATICALLY\n"
         "══════════════════════════════════════\n\n"
         "You don't need a special format. The AI understands plain speech.\n\n"
         "REVENUE\n"
@@ -1909,7 +2604,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "────────────────────────────────────\n"
         "WHAT IT CANNOT CAPTURE\n"
         "────────────────────────────────────\n\n"
-        "  ✗ Revenue you don't report — only knows what your team tells it\n"
+        "  ✗ Revenue you don't report — TradeFlow only knows what your team tells it\n"
         "  ✗ Staff hours or wages — no labour cost tracking\n"
         "  ✗ Till or EPOS data — no integration with payment systems\n"
         "  ✗ Blurry or dark invoice photos — AI cannot read unclear images\n"
@@ -1930,13 +2625,13 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  P&L for any period — revenue vs invoiced costs = gross profit.\n"
         "  Try: /financials   /financials this month   /financials March 2026\n\n"
         "/recall [date or period]\n"
-        "  Ask the bot what happened on any day or week.\n"
+        "  Ask what happened on any day or week.\n"
         "  The AI summarises all entries for that period.\n"
         "  Try: /recall yesterday   /recall 5 May   /recall last week   /recall March\n\n"
         "/outstanding\n"
         "  All unpaid invoices sorted by due date.\n"
         "  Shows supplier, amount, and days until due (or days overdue).\n"
-        "  The bot also sends an automatic 9am reminder to this group\n"
+        "  An automatic 9am reminder is also sent to this group\n"
         "  when any invoice is due within 3 days or is overdue.\n\n"
         "/markpaid [invoice number]\n"
         "  Mark an invoice as settled. Get the number from /outstanding.\n"
@@ -1954,7 +2649,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "UK LEGAL COMPLIANCE COMMANDS\n"
         "══════════════════════════════\n\n"
-        "These features are unique to Restaurant-IQ and built specifically\n"
+        "These features are unique to TradeFlow and built specifically\n"
         "for UK legal requirements that every restaurant must meet.\n\n"
         "/import [date range]: [description]\n"
         "  Import any historical period in plain English.\n"
@@ -2016,18 +2711,18 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "gives the AI enough to produce sharp weekly insights.\n\n"
         "INVOICES:\n"
         "Photograph every invoice the day it arrives — not in batches.\n"
-        "The bot tracks due dates from the invoice date, so late uploads\n"
+        "TradeFlow tracks due dates from the invoice date, so late uploads\n"
         "mean you miss payment warnings.\n\n"
         "YOUR TEAM:\n"
         "Add all staff to this Telegram group.\n"
-        "The bot records who sent each update, so the weekly report\n"
+        "TradeFlow records who sent each update, so the weekly report\n"
         "can link issues and wins to the right shifts and people.\n\n"
         "WHAT GOOD ENTRIES LOOK LIKE:\n"
         "  ✅ \"Friday lunch: 44 covers, £1,180. Veg soup sold out at 1pm.\n"
         "       Two tables complimented the new sea bass.\"\n\n"
         "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
         "  ✅ \"Walk-in fridge alarm at 6am — engineer confirmed false alarm.\"\n\n"
-        "WHAT THE BOT IGNORES:\n"
+        "WHAT GETS IGNORED:\n"
         "  ✗ Short replies like \"ok\" or \"thanks\" — no useful data\n"
         "  ✗ Forwarded articles or links\n"
         "  ✗ Messages sent in any other group — only reads this one\n\n"
@@ -2283,11 +2978,33 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Export CSV command ─────────────────────────────────────────────────────────
 
+def _fmt_date_uk(iso_date: str) -> str:
+    """Convert YYYY-MM-DD to DD/MM/YYYY for UK accounting software."""
+    if not iso_date:
+        return ""
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return iso_date
+
+
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /export           — export this week's entries as CSV
-    /export last month — export a specific period
-    Useful for importing into Excel, accounting software, or sharing with accountants.
+    /export [format] [period]
+
+    Formats:
+      (none)    — general entries log (Excel/accountant review)
+      xero      — Xero Bills import CSV (purchase invoices)
+      sage      — Sage 50 purchase journal CSV
+      payroll   — Labour cost entries CSV (wages/agency/contractor)
+
+    Examples:
+      /export                    — this week's entries
+      /export last month         — last month's entries
+      /export xero               — Xero bills for this month
+      /export xero last month    — Xero bills for last month
+      /export sage this month    — Sage purchase journal for this month
+      /export payroll last month — Labour costs for last month
     """
     import csv
     import io
@@ -2296,71 +3013,226 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
-    query = " ".join(context.args).strip() if context.args else "this week"
-    date_range = _parse_date_range(query)
+    # Detect optional format keyword as first argument
+    args = list(context.args) if context.args else []
+    fmt = "general"
+    FORMATS = {"xero", "sage", "payroll"}
+    if args and args[0].lower() in FORMATS:
+        fmt = args[0].lower()
+        args = args[1:]
+
+    period_query = " ".join(args).strip() if args else "this month"
+    date_range = _parse_date_range(period_query)
 
     if not date_range:
         await update.message.reply_text(
-            f"Couldn't understand period \"{query}\".\n"
+            f"Couldn't understand period \"{period_query}\".\n"
             "Try: this week, this month, last month, March 2026"
         )
         return
 
     start_date, end_date = date_range
-    entries = get_entries_with_staff(restaurant["id"], start_date, end_date)
-
-    if not entries:
-        await update.message.reply_text(
-            f"No entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}."
-        )
-        return
-
-    # Build CSV in memory
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue", "Covers"])
-
-    for e in entries:
-        summary = ""
-        urgency = ""
-        revenue = ""
-        covers = ""
-        if e["structured_data"]:
-            try:
-                a = json.loads(e["structured_data"])
-                summary = a.get("summary", "")
-                urgency = a.get("urgency", "")
-                revenue = a.get("revenue") or ""
-                covers = a.get("covers") or ""
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        writer.writerow([
-            e["entry_date"],
-            e["entry_time"],
-            e["entry_type"],
-            e["staff_name"] or "",
-            e["category"] or "",
-            summary,
-            (e["raw_text"] or "")[:300],
-            urgency,
-            revenue,
-            covers,
-        ])
-
-    csv_bytes = output.getvalue().encode("utf-8-sig")  # utf-8-sig for Excel compatibility
-    period_label = f"{start_date}_to_{end_date}"
     safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
-    filename = f"{safe_name}_{period_label}.csv"
+    period_label = f"{start_date}_to_{end_date}"
+    output = io.StringIO()
+
+    # ── XERO BILLS IMPORT ──────────────────────────────────────────────────────
+    if fmt == "xero":
+        invoices = get_invoices_for_period(restaurant["id"], start_date, end_date)
+        if not invoices:
+            await update.message.reply_text(
+                f"No invoices found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Invoices are captured when you send a photo of a supplier invoice."
+            )
+            return
+
+        writer = csv.writer(output)
+        # Xero UK Bills import format (required columns marked *)
+        writer.writerow([
+            "*ContactName", "*InvoiceNumber", "*InvoiceDate", "*DueDate",
+            "Description", "Quantity", "*UnitAmount", "Discount",
+            "*AccountCode", "*TaxType", "TaxAmount", "Currency", "BrandingTheme",
+        ])
+        for idx, inv in enumerate(invoices, start=1):
+            net = round((inv["total_amount"] or 0) - (inv["vat"] or 0), 2)
+            vat = round(inv["vat"] or 0, 2)
+            tax_type = "20% (VAT on Expenses)" if vat > 0 else "No VAT"
+            inv_number = f"INV-{inv['id']:04d}"
+            inv_date = _fmt_date_uk(inv["invoice_date"] or start_date)
+            due_date = _fmt_date_uk(inv["due_date"] or end_date)
+            writer.writerow([
+                inv["supplier_name"] or "Unknown Supplier",
+                inv_number,
+                inv_date,
+                due_date,
+                inv["description"] or f"Purchase from {inv['supplier_name'] or 'supplier'}",
+                1,                  # Quantity
+                net,                # UnitAmount (net of VAT)
+                "",                 # Discount
+                "429",              # AccountCode — Xero default "General Expenses" (change to 300 for food purchases)
+                tax_type,
+                vat if vat > 0 else "",
+                "GBP",
+                "",
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_XERO_bills_{period_label}.csv"
+        caption = (
+            f"Xero Bills Import — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(invoices)} invoice(s)\n\n"
+            "How to import: Xero > Accounts Payable > Import\n"
+            "Tip: Change AccountCode 429 to 300 for food/drink purchases."
+        )
+
+    # ── SAGE 50 PURCHASE JOURNAL ───────────────────────────────────────────────
+    elif fmt == "sage":
+        invoices = get_invoices_for_period(restaurant["id"], start_date, end_date)
+        if not invoices:
+            await update.message.reply_text(
+                f"No invoices found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Invoices are captured when you send a photo of a supplier invoice."
+            )
+            return
+
+        writer = csv.writer(output)
+        # Sage 50 Accounts purchase transaction import format
+        writer.writerow([
+            "Type", "Account", "N/C", "Dept", "Date", "Ref",
+            "Details", "Net Amount", "T/C", "VAT Amount",
+        ])
+        for inv in invoices:
+            net = round((inv["total_amount"] or 0) - (inv["vat"] or 0), 2)
+            vat = round(inv["vat"] or 0, 2)
+            tax_code = "T1" if vat > 0 else "T0"   # T1 = 20% standard, T0 = zero rated
+            # Sage supplier account code: first 8 chars of supplier name, uppercase
+            supplier_code = (inv["supplier_name"] or "UNKNOWN").upper().replace(" ", "")[:8]
+            inv_date = _fmt_date_uk(inv["invoice_date"] or start_date)
+            ref = f"RIQ{inv['id']:04d}"
+            writer.writerow([
+                "PI",               # Purchase Invoice
+                supplier_code,
+                "5000",             # Nominal Code — Purchases (change to 5001 for food, 5002 for drinks, etc.)
+                "0",                # Department
+                inv_date,
+                ref,
+                inv["description"] or f"Purchase from {inv['supplier_name'] or 'supplier'}",
+                f"{net:.2f}",
+                tax_code,
+                f"{vat:.2f}",
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_SAGE_purchases_{period_label}.csv"
+        caption = (
+            f"Sage 50 Purchase Journal — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(invoices)} invoice(s)\n\n"
+            "How to import: Sage 50 > File > Import > Audit Trail Transactions\n"
+            "Tip: Nominal Code 5000 = Purchases. Split into 5001 (food) / 5002 (drinks) if needed."
+        )
+
+    # ── PAYROLL / LABOUR CSV ───────────────────────────────────────────────────
+    elif fmt == "payroll":
+        labour = get_labour_for_period(restaurant["id"], start_date, end_date)
+        if not labour:
+            await update.message.reply_text(
+                f"No labour entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}.\n"
+                "Log labour costs with: /labour £450 wages Monday"
+            )
+            return
+
+        writer = csv.writer(output)
+        writer.writerow([
+            "Date", "Reference", "Description", "Shift", "Hours", "Amount (£)",
+            "Weekly Total", "Notes",
+        ])
+        # Group by week for running totals
+        weekly = {}
+        for l in labour:
+            wk = l["labour_date"][:7]  # YYYY-MM key
+            weekly[wk] = weekly.get(wk, 0) + (l["amount"] or 0)
+
+        week_seen = {}
+        for l in labour:
+            wk = l["labour_date"][:7]
+            if wk not in week_seen:
+                week_seen[wk] = 0
+            week_seen[wk] += l["amount"] or 0
+            ref = f"LAB{l['id']:04d}"
+            writer.writerow([
+                _fmt_date_uk(l["labour_date"]),
+                ref,
+                l["description"] or "Labour cost",
+                l["shift"] or "",
+                f"{l['hours']:.1f}" if l["hours"] else "",
+                f"{l['amount']:.2f}",
+                f"{week_seen[wk]:.2f}",
+                "",
+            ])
+
+        # Summary row
+        total = sum(l["amount"] or 0 for l in labour)
+        writer.writerow([])
+        writer.writerow(["TOTAL", "", "", "", "", f"{total:.2f}", "", ""])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_PAYROLL_{period_label}.csv"
+        caption = (
+            f"Labour Cost Export — {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(labour)} entries | Total: £{total:.2f}\n\n"
+            "Compatible with BrightPay, Sage Payroll, and Excel payroll templates."
+        )
+
+    # ── GENERAL ENTRIES (default) ──────────────────────────────────────────────
+    else:
+        entries = get_entries_with_staff(restaurant["id"], start_date, end_date)
+        if not entries:
+            await update.message.reply_text(
+                f"No entries found for {_fmt_date(start_date)} to {_fmt_date(end_date)}."
+            )
+            return
+
+        writer = csv.writer(output)
+        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue (£)", "Covers"])
+
+        for e in entries:
+            summary = urgency = revenue = covers = ""
+            if e["structured_data"]:
+                try:
+                    a = json.loads(e["structured_data"])
+                    summary = a.get("summary", "")
+                    urgency = a.get("urgency", "")
+                    revenue = a.get("revenue") or ""
+                    covers = a.get("covers") or ""
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            writer.writerow([
+                e["entry_date"], e["entry_time"], e["entry_type"],
+                e["staff_name"] or "", e["category"] or "",
+                summary, (e["raw_text"] or "")[:300],
+                urgency, revenue, covers,
+            ])
+
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        filename = f"{safe_name}_{period_label}.csv"
+        caption = (
+            f"Data export: {restaurant['name']}\n"
+            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
+            f"{len(entries)} entries\n\n"
+            "Also try:\n"
+            "/export xero — Xero Bills import\n"
+            "/export sage — Sage 50 purchase journal\n"
+            "/export payroll — Labour cost sheet"
+        )
 
     await update.message.reply_document(
         document=csv_bytes,
         filename=filename,
-        caption=(
-            f"Data export: {restaurant['name']}\n"
-            f"{_fmt_date(start_date)} to {_fmt_date(end_date)}\n"
-            f"{len(entries)} entries"
-        ),
+        caption=caption,
     )
 
 
@@ -2667,14 +3539,14 @@ async def _auto_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
                         pass
                 entries_data.append(entry)
 
-            report_text = generate_weekly_report(entries_data, restaurant["name"], financials)
+            report_text = generate_weekly_report(entries_data, restaurant["name"], financials, _cs(restaurant))
             save_weekly_report(restaurant["id"], week_start, week_end, report_text)
 
             safe_name = restaurant["name"].replace(" ", "_").replace("/", "-")
             pdf_path = os.path.join(REPORTS_DIR, f"{safe_name}_{week_start}.pdf")
             generate_pdf_report(report_text, restaurant["name"], week_start, week_end, pdf_path)
 
-            header = f"RESTAURANT-IQ WEEKLY BRIEFING\n{'=' * 34}\n\n"
+            header = f"TRADEFLOW WEEKLY BRIEFING\n{'=' * 34}\n\n"
             full_message = header + report_text
             if len(full_message) <= 4096:
                 await context.bot.send_message(chat_id=chat_id, text=full_message)
@@ -2809,11 +3681,66 @@ def _get_version_info() -> dict:
     return _VERSION_CACHE
 
 
+async def cmd_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/currency [CODE] — view or set the currency for this business.
+
+    Supported codes: GBP, USD, EUR, NGN, KES, ZAR, GHS, UGX, TZS, XOF
+
+    Examples:
+      /currency          — show current currency
+      /currency USD      — switch to US Dollar ($)
+      /currency NGN      — switch to Nigerian Naira (₦)
+      /currency KES      — switch to Kenyan Shilling (KSh)
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        code, sym = get_restaurant_currency(chat_id)
+        display_name = SUPPORTED_CURRENCIES.get(code, (sym, code))[1]
+        supported = "\n".join(
+            f"  {c} — {sym_} ({name})"
+            for c, (sym_, name) in SUPPORTED_CURRENCIES.items()
+        )
+        await update.message.reply_text(
+            f"Currency — {restaurant['name']}\n"
+            f"{'─' * 36}\n"
+            f"Current: {code} ({sym}) — {display_name}\n\n"
+            f"To change: /currency CODE\n\n"
+            f"Supported currencies:\n{supported}"
+        )
+        return
+
+    requested = context.args[0].upper()
+    try:
+        code, sym = set_restaurant_currency(chat_id, requested)
+        display_name = SUPPORTED_CURRENCIES[code][1]
+        await update.message.reply_text(
+            f"Currency updated to *{code}* ({sym}) — {display_name}\n\n"
+            f"All financial displays in {restaurant['name']} will now use {sym}.",
+            parse_mode="Markdown",
+        )
+    except ValueError:
+        supported_codes = ", ".join(SUPPORTED_CURRENCIES.keys())
+        await update.message.reply_text(
+            f"Unsupported currency code: {requested}\n\n"
+            f"Supported codes: {supported_codes}\n"
+            f"Example: /currency USD"
+        )
+
+
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
 
-    text = f"Commit: `{info['hash']}`\nDeployed: {info['date']}"
+    text = (
+        f"*TradeFlow* — v2.0 (Multi-currency & International)\n"
+        f"Commit: `{info['hash']}`\n"
+        f"Deployed: {info['date']}"
+    )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -2837,7 +3764,7 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Loading demo data here would mix fake data with your real records.\n\n"
             f"To try the demo safely:\n"
             f"  1. Create a new Telegram group\n"
-            f"  2. Add the bot to that group\n"
+            f"  2. Add TradeFlow to that group\n"
             f"  3. Run /demo there\n\n"
             f"Your real data in this group is untouched."
         )
@@ -3016,8 +3943,10 @@ def main():
     app.add_handler(CommandHandler("weeklyreport", cmd_weekly_report))
     app.add_handler(CommandHandler("recall", cmd_recall))
     app.add_handler(CommandHandler("financials", cmd_financials))
+    app.add_handler(CommandHandler("groupreport", cmd_groupreport))
     app.add_handler(CommandHandler("outstanding", cmd_outstanding))
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
+    app.add_handler(CommandHandler("currency", cmd_currency))
     app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
@@ -3048,6 +3977,9 @@ def main():
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("teamstats", cmd_teamstats))
     app.add_handler(CommandHandler("eightysix", cmd_eightysix))
+    app.add_handler(CommandHandler("stock", cmd_stock))
+    app.add_handler(CommandHandler("rota", cmd_rota))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("deletedata", cmd_deletedata))
 
@@ -3071,7 +4003,11 @@ def main():
         name="weekly_reports",
     )
 
-    logger.info("Restaurant-IQ Bot is running. Press Ctrl+C to stop.")
+    # Start web dashboard server on $PORT (Railway) or 8080 (local)
+    _port = int(os.environ.get("PORT", 8080))
+    start_dashboard_server(_port)
+
+    logger.info("TradeFlow Bot is running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)
 
 
