@@ -40,9 +40,10 @@ import json as _json_mod
 from datetime import timezone as _tz
 from datetime import datetime, timedelta, date
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     MessageHandler,
@@ -330,64 +331,110 @@ def _auto_log_compliance(restaurant_id: int, entry_id: int, analysis: dict, entr
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Welcome to TradeFlow!\n\n"
-        "I capture operational data from your team and turn it into weekly intelligence briefings.\n\n"
-        "SETUP:\n"
-        "  /register YourBusinessName — Register this group\n"
-        "  /currency USD              — Set your currency (GBP, USD, NGN, KES, ZAR, GHS...)\n\n"
-        "DAILY USE (just send me):\n"
-        "  Voice note — Shift update, observations, issues\n"
-        "  Photo       — Invoice, receipt, delivery note\n"
-        "  Text        — Any quick update\n\n"
-        "REPORTS & QUERIES:\n"
-        "  /weeklyreport          — Full weekly briefing + P&L (PDF included)\n"
-        "  /history               — Browse past weekly reports\n"
-        "  /today                 — Everything logged today\n"
-        "  /financials            — Revenue, costs, labour and net margin\n"
-        "  /groupreport           — Consolidated P&L across ALL your sites\n"
-        "  /stock                 — Stock levels vs par (all items)\n"
-        "  /stock low             — Only items below par level\n"
-        "  /stock set item 10 kg  — Set par level for an item\n"
-        "  /stock count item 3 kg — Log current stock count\n"
-        "  /rota                  — Show this week's staff rota\n"
-        "  /rota add Mon John 9am-5pm — Add a shift to the rota\n"
-        "  /rota copy             — Copy last week's rota to this week\n"
-        "  /rota next             — View next week's rota\n"
-        "  /dashboard             — Get your private live web dashboard link\n"
-        "  /recall 5 May          — What happened on a specific date\n"
-        "  /recall last week      — Summary of last week\n"
-        "  /recall March          — Everything recorded in March\n"
-        "  /status                — Entries captured this week\n\n"
-        "COSTS & LABOUR:\n"
-        "  /labour 450 wages Mon  — Record wages or labour costs\n"
-        "  /outstanding           — List unpaid invoices\n"
-        "  /markpaid 12           — Mark invoice #12 as paid\n\n"
-        "TEAM & MENU:\n"
-        "  /teamstats             — Who's contributing and how much\n"
-        "  /eightysix             — Most frequently 86'd items\n\n"
-        "COMPLIANCE (Restaurant Pack):\n"
-        "  /tips                  — Tips log (Tips Act 2023)\n"
-        "  /tipsreport            — Formal tip allocation record\n"
-        "  /allergens             — Allergen traceability log (Natasha's Law)\n"
-        "  /inspection            — FSA inspection readiness report\n\n"
-        "DATA MANAGEMENT:\n"
-        "  /rename NewName        — Rename your business\n"
-        "  /import [dates]: [description] — Import any historical period\n"
-        "  /export                — Export entries as CSV (Excel/accountants)\n"
-        "  /export xero           — Xero Bills import CSV (purchase invoices)\n"
-        "  /export sage           — Sage 50 purchase journal CSV\n"
-        "  /export payroll        — Labour cost sheet (BrightPay/Sage Payroll)\n"
-        "  /deletedata 90         — Delete entries older than 90 days (GDPR)\n"
-        "  /cleardata CONFIRM     — Delete all entries and start fresh\n\n"
-        "HELP & SUPPORT:\n"
-        "  /ask [question]        — AI-powered help\n"
-        "  /support [message]     — Contact the support team\n"
-        "  /supportstatus         — Check your support tickets\n\n"
-        "Every message from any team member in this group is captured and analysed.\n"
-        "Weekly reports are sent automatically every Monday at 08:00.\n\n"
-        "Type /features for a full guide, or /ask [your question] for instant help."
-    )
+    chat = update.effective_chat
+    is_private = chat.type == "private"
+
+    if is_private:
+        # ── Private chat: mobile-friendly onboarding wizard ──
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [
+            [InlineKeyboardButton("How to set up — step by step", callback_data="onboard_guide")],
+            [InlineKeyboardButton("I need help", callback_data="onboard_help")],
+        ]
+        await update.message.reply_text(
+            "*Welcome to TradeFlow!*\n\n"
+            "TradeFlow captures your team's daily activity — voice notes, photos, texts — "
+            "and turns them into weekly business intelligence reports.\n\n"
+            "To get started, tap the button below.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        context.user_data["bot_username"] = bot_username
+    else:
+        # ── Group chat: check registration status ──
+        chat_id = str(chat.id)
+        restaurant = get_restaurant_by_group(chat_id)
+        if not restaurant:
+            keyboard = [[InlineKeyboardButton("Register this group now", callback_data="onboard_register")]]
+            await update.message.reply_text(
+                "*Welcome to TradeFlow!*\n\n"
+                "This group is not registered yet.\n\n"
+                "Tap the button below, or type:\n"
+                "`/register Your Business Name`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await update.message.reply_text(
+                f"*{restaurant['name']}* is live on TradeFlow.\n\n"
+                "Just send a voice note, photo or text and I'll capture it.\n\n"
+                "Type /features for the full command list.",
+                parse_mode="Markdown",
+            )
+
+
+async def _onboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button taps from the onboarding flow."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "onboard_guide":
+        bot_username = context.user_data.get("bot_username", "TradeFlowBot")
+        keyboard = [
+            [InlineKeyboardButton("Done — I've set it up!", callback_data="onboard_done")],
+            [InlineKeyboardButton("I need help", callback_data="onboard_help")],
+        ]
+        await query.edit_message_text(
+            "*Setup Guide — 4 steps*\n\n"
+            "*Step 1* — Create a Telegram group\n"
+            "Tap the pencil icon → New Group → add your staff (or yourself)\n"
+            "Give the group a name like: _The Blue Cafe Ops_\n\n"
+            "*Step 2* — Add TradeFlow to the group\n"
+            "Open your group → tap the group name at the top → Add Members\n"
+            f"Search for: `@{bot_username}`\n"
+            "Tap Add.\n\n"
+            "*Step 3* — Type this in the group:\n"
+            "`/register Your Business Name`\n"
+            "_(Replace with your actual business name)_\n\n"
+            "*Step 4* — You're live!\n"
+            "Staff can send voice notes, photos and texts straight away.\n"
+            "You'll get a full report every Monday at 8am.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif data == "onboard_done":
+        await query.edit_message_text(
+            "*You're all set!*\n\n"
+            "Go to your group and start using TradeFlow:\n\n"
+            "Send a voice note — shift update, issue, anything\n"
+            "Send a photo — invoice, receipt, delivery note\n"
+            "Send a text — any quick note\n\n"
+            "Type /weeklyreport in the group any time to get your report.\n\n"
+            "Questions? Type /support in the group.",
+            parse_mode="Markdown",
+        )
+
+    elif data == "onboard_help":
+        await query.edit_message_text(
+            "*Need help?*\n\n"
+            "Type `/support your message` in your group and we'll get back to you.\n\n"
+            "Or go back and follow the setup guide step by step.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back to setup guide", callback_data="onboard_guide")],
+            ]),
+        )
+
+    elif data == "onboard_register":
+        await query.edit_message_text(
+            "*Register this group*\n\n"
+            "Type the following message in this chat:\n\n"
+            "`/register Your Business Name`\n\n"
+            "_(Replace with your actual business trading name)_",
+            parse_mode="Markdown",
+        )
 
 
 # ── Registration conversation states ──────────────────────────────────────────
@@ -3955,6 +4002,9 @@ def main():
     # Data management
     app.add_handler(CommandHandler("rename", cmd_rename))
     app.add_handler(CommandHandler("cleardata", cmd_cleardata))
+
+    # Onboarding button callbacks
+    app.add_handler(CallbackQueryHandler(_onboard_callback, pattern="^onboard_"))
 
     # Help & onboarding
     app.add_handler(CommandHandler("ask", cmd_ask))
