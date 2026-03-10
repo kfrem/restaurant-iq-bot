@@ -16,12 +16,13 @@ Handles:
   - /demo               — load a realistic week of demo data for client presentations
   - /demoreset          — remove all demo data from this chat
 
-UK Legal Compliance (unique to TradeFlow):
-  - /tips [period]      — tip events log (Employment (Allocation of Tips) Act 2023)
-  - /tipsreport         — formal Tips Act compliance record (3-year retention duty)
-  - /allergens          — allergen traceability log (Natasha's Law / FSA)
+Compliance commands (laws and regulatory bodies adapt per country — see compliance.py):
+  - /tips [period]      — tip events log (law reference from compliance.py)
+  - /tipsreport         — formal tips compliance record
+  - /allergens          — allergen traceability log (food businesses only)
   - /resolvallergen [id]— mark an allergen alert as reviewed and resolved
-  - /inspection         — FSA Food Hygiene inspection readiness report (90-day analysis)
+  - /inspection         — inspection readiness report (food businesses only)
+  - /setcountry [code]  — set country to use correct laws/bodies (auto-detected from VAT)
   - /import [dates]: [description] — import historical data for any period (day, fortnight, month, quarter, etc)
 
 Message types:
@@ -126,6 +127,11 @@ from model_router import (
 )
 from report_generator import generate_pdf_report
 from demo_data import get_demo_entries, DEMO_STAFF
+from compliance import (
+    get_compliance, infer_country, get_country_display, country_from_vat_number,
+    is_food_business, tips_enabled, allergen_enabled, inspection_enabled,
+    SUPPORTED_COUNTRIES,
+)
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -450,12 +456,9 @@ def _is_skip(text: str) -> bool:
     return text.strip().lower() in _DONE_WORDS
 
 
-_FOOD_INDUSTRIES = {"restaurant", "cafe", "café", "bar", "pub", "bakery", "food truck", "takeaway", "hotel", "supermarket"}
-
+# Industry/compliance helpers — defined in compliance.py, aliased here for convenience
 def _is_food_business(restaurant: dict) -> bool:
-    """True if this business handles food — used to show/hide food-specific commands."""
-    industry = (restaurant.get("industry") or "restaurant").lower()
-    return industry in _FOOD_INDUSTRIES
+    return is_food_business(restaurant)
 
 
 async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,18 +606,25 @@ async def _reg_got_legal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not _is_skip(text):
         import re as _re
-        vat_match = _re.search(r'GB\s*\d{9}|\d{9}', text, _re.I)
-        # Company number is typically 8 digits (UK)
-        co_match = _re.search(r'\b\d{8}\b', text)
-        vat = vat_match.group(0).upper() if vat_match else None
+        vat_match = _re.search(r'[A-Z]{2}\s*\d{7,12}', text, _re.I)
+        # Company/registration number: generic 6-12 digit sequence
+        co_match = _re.search(r'\b\d{6,12}\b', text)
+        vat = vat_match.group(0).upper().replace(" ", "") if vat_match else None
         company_number = co_match.group(0) if co_match else text if not vat else None
-        update_restaurant_profile(chat_id, vat_number=vat, company_number=company_number)
+
+        # Auto-detect country from the VAT number prefix
+        inferred_country = country_from_vat_number(vat) if vat else None
+
+        profile_fields = {"vat_number": vat, "company_number": company_number}
+        if inferred_country:
+            profile_fields["country_code"] = inferred_country
+        update_restaurant_profile(chat_id, **profile_fields)
 
     await update.message.reply_text(
         f"*Step 4 of 4 — About the Business*\n"
         f"Brief description: what you do, size, number of locations?\n"
         f"_(e.g. Plumbing contractor, 4 vans, North London)_\n"
-        f"_(e.g. Italian restaurant, 60 covers, 2 sites)_\n\n"
+        f"_(e.g. Italian restaurant, 2 sites, city centre)_\n\n"
         f"{_SKIP_HINT}",
         parse_mode="Markdown",
     )
@@ -2331,18 +2341,25 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = query if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
 
+    comp = get_compliance(restaurant)
+    tips_law = comp["tips_law"]
+    tips_summary = comp["tips_summary"]
+    retention = comp["tips_retention_years"]
+    sym = _cs(restaurant)
+
     if not events:
+        example_cs = sym
         await update.message.reply_text(
             f"Tips Log — {restaurant['name']}\n"
             f"Period: {period_label}\n\n"
             f"No tip events recorded for this period.\n\n"
             f"Tips are logged automatically when your team mentions them in voice notes or messages.\n"
-            f"Example: \"Service tonight was great — card tips came to about £180\"\n\n"
-            f"Use /tipsreport to generate a compliance record."
+            f"Example: \"Great day — card tips came to about {example_cs}150\"\n\n"
+            + (f"Legal: {tips_law}\n{tips_summary}\n\n" if tips_law else "")
+            + "Use /tipsreport to generate a formal tips record."
         )
         return
 
-    sym = _cs(restaurant)
     lines = []
     for t in events:
         amount = t["gross_amount"] or 0
@@ -2351,6 +2368,16 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  {sym}{amount:.2f}  ({shift})")
 
     events_text = "\n".join(lines)
+
+    # Footer: legal context if applicable, generic note if not
+    if tips_law:
+        footer = (
+            f"Law: {tips_law}\n"
+            f"{tips_summary}"
+            + (f"\nRecords must be kept for {retention} years." if retention else "")
+        )
+    else:
+        footer = tips_summary
 
     await update.message.reply_text(
         f"Tips Log — {restaurant['name']}\n"
@@ -2362,9 +2389,8 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{'─' * 40}\n"
         f"Total:        {sym}{summary['total']:>8,.2f}\n\n"
         f"Events ({len(events)}):\n{events_text}\n\n"
-        f"Legal requirement: 100% of tips must be passed to staff.\n"
-        f"Records must be kept for 3 years (Tips Act 2023).\n"
-        f"Use /tipsreport to generate a formal compliance record."
+        f"{footer}\n"
+        f"Use /tipsreport to generate a formal tips record."
     )
 
 
@@ -2399,19 +2425,26 @@ async def cmd_tipsreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = f"{_fmt_date(start_date)} to {_fmt_date(end_date)}" if start_date != end_date else _fmt_date(start_date)
 
+    comp = get_compliance(restaurant)
+    tips_law = comp["tips_law"]
     sym = _cs(restaurant)
+
+    law_label = tips_law or "Tips Record"
     await update.message.reply_text(
-        f"Generating Tips Act compliance record for {period_label}...\n"
+        f"Generating tips record for {period_label}...\n"
         f"({len(events)} events, {sym}{summary['total']:.2f} total)"
     )
 
     events_as_dicts = [dict(e) for e in events]
-    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label, sym)
+    report = generate_tips_report(
+        events_as_dicts, summary, restaurant["name"], period_label, sym,
+        compliance=comp,
+    )
 
     header = (
-        f"TIPS ACT COMPLIANCE RECORD\n"
-        f"Employment (Allocation of Tips) Act 2023\n"
-        f"{'=' * 38}\n\n"
+        f"TIPS RECORD — {restaurant['name'].upper()}\n"
+        + (f"{tips_law}\n" if tips_law else "")
+        + f"{'=' * 38}\n\n"
     )
     full_message = header + report
 
@@ -2461,9 +2494,11 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    comp = get_compliance(restaurant)
     await update.message.reply_text(
         f"Generating inspection readiness report from {len(entries)} entries (last 90 days)...\n"
-        "Analysing for: supplier traceability, equipment issues, allergen flags, staff records."
+        f"Analysing for: supplier traceability, equipment issues, allergen flags, staff records.\n"
+        f"Inspection authority: {comp['inspection_body']}"
     )
 
     entries_data = []
@@ -2482,8 +2517,11 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(item)
 
-    report = generate_inspection_report(entries_data, restaurant["name"],
-                                         restaurant.get("industry", "restaurant"))
+    report = generate_inspection_report(
+        entries_data, restaurant["name"],
+        restaurant.get("industry", "restaurant"),
+        compliance=comp,
+    )
 
     # Also append open allergen alerts
     open_alerts = [a for a in get_allergen_alerts(restaurant["id"], days_back=90) if not a["resolved"]]
@@ -2495,7 +2533,8 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report += f"\n\n---\nOpen Allergen Alerts ({len(open_alerts)}):\n{alert_lines}\nResolve with: /resolvallergen [id]"
 
     header = (
-        f"FSA INSPECTION READINESS — {restaurant['name'].upper()}\n"
+        f"INSPECTION READINESS — {restaurant['name'].upper()}\n"
+        f"{comp['inspection_body']}\n"
         f"Based on entries: {_fmt_date(cutoff_str)} to {_fmt_date(today_str)}\n"
         f"{'=' * 38}\n\n"
     )
@@ -2533,6 +2572,10 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     open_alerts = [a for a in alerts if not a["resolved"]]
     resolved_alerts = [a for a in alerts if a["resolved"]]
 
+    comp = get_compliance(restaurant)
+    allergen_law = comp["allergen_law"]
+    allergen_summary = comp["allergen_summary"]
+
     if not alerts:
         await update.message.reply_text(
             f"Allergen Alerts — {restaurant['name']}\n\n"
@@ -2541,8 +2584,7 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  - A supplier change or new supplier on an invoice\n"
             "  - An ingredient substitution mentioned in voice notes\n"
             "  - A new product that could affect your allergen declarations\n\n"
-            "Natasha's Law: you must keep allergen traceability records and\n"
-            "update allergen declarations when ingredients change."
+            f"{allergen_law}:\n{allergen_summary}"
         )
         return
 
@@ -2564,12 +2606,10 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"Allergen Traceability Log — {restaurant['name']}\n"
-        f"Last 90 days\n"
+        f"Last 90 days  |  {allergen_law}\n"
         f"{'─' * 40}\n\n"
         + "\n".join(lines)
-        + "\n\n"
-        "Natasha's Law: update your allergen declarations whenever\n"
-        "a supplier, product, or ingredient changes.\n"
+        + f"\n\n{allergen_summary}\n"
         "Use /inspection for a full inspection readiness report."
     )
 
@@ -3389,6 +3429,18 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    comp = get_compliance(restaurant)
+    data_law = comp["data_law"]
+    data_summary = comp["data_summary"]
+    tips_law = comp.get("tips_law")
+    retention = comp.get("tips_retention_years", 0)
+
+    tips_note = (
+        f"Tips records ({tips_law}, {retention}-year retention) are NOT affected."
+        if tips_law and retention
+        else "Tips records are kept for your records and are NOT affected."
+    )
+
     if not context.args:
         await update.message.reply_text(
             "Delete entries older than a specified number of days.\n\n"
@@ -3396,8 +3448,9 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Examples:\n"
             "  /deletedata 90   — delete entries older than 90 days\n"
             "  /deletedata 365  — delete entries older than 1 year\n\n"
-            "GDPR note: this deletes daily_entries and linked compliance records.\n"
-            "Tips Act records (3-year legal retention) are NOT affected.\n"
+            f"Data law: {data_law}\n"
+            f"{data_summary}\n\n"
+            f"{tips_note}\n"
             "Use /cleardata CONFIRM to delete everything."
         )
         return
@@ -3426,11 +3479,11 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        f"GDPR data deletion complete.\n\n"
+        f"Data deletion complete ({data_law}).\n\n"
         f"Deleted: {deleted} entries older than {days} days\n"
-        f"Restaurant: {restaurant['name']}\n\n"
+        f"Business: {restaurant['name']}\n\n"
         f"Remaining entries and compliance records are intact.\n"
-        f"Tips Act records are unaffected (3-year legal retention applies)."
+        f"{tips_note}"
     )
 
 
@@ -3921,6 +3974,94 @@ async def cmd_setindustry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_setcountry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setcountry [code] — view or set the country for this business.
+
+    The country determines which compliance features, laws, and inspection
+    bodies are relevant. It is auto-detected from your VAT number at
+    registration, but can be changed here at any time.
+
+    Examples:
+      /setcountry        — show current country and what it affects
+      /setcountry GB     — United Kingdom (FSA, Natasha's Law, Tips Act)
+      /setcountry US     — United States (FDA, FALCPA)
+      /setcountry AU     — Australia (FSANZ, Privacy Act)
+      /setcountry NG     — Nigeria (NAFDAC)
+      /setcountry KE     — Kenya
+      /setcountry ZA     — South Africa (POPIA)
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        comp = get_compliance(restaurant)
+        country_code = infer_country(restaurant)
+        country_name = get_country_display(restaurant)
+
+        supported = "\n".join(
+            f"  {code} — {name}"
+            for code, name in SUPPORTED_COUNTRIES.items()
+        )
+
+        tips_status = (
+            f"  Tips Act: {comp['tips_law']} ✓"
+            if comp.get("tips_enabled")
+            else f"  Tips tracking: available (no mandatory law in {country_name})"
+        )
+        allergen_status = f"  Allergen law: {comp['allergen_law']}"
+        inspection_status = f"  Inspection body: {comp['inspection_body']}"
+        data_status = f"  Data law: {comp['data_law']}"
+
+        await update.message.reply_text(
+            f"Country — {restaurant['name']}\n"
+            f"{'─' * 36}\n"
+            f"Current: {country_name} ({country_code})\n\n"
+            f"Active compliance framework:\n"
+            f"{tips_status}\n"
+            f"{allergen_status}\n"
+            f"{inspection_status}\n"
+            f"{data_status}\n\n"
+            f"To change: /setcountry CODE\n\n"
+            f"Supported countries:\n{supported}"
+        )
+        return
+
+    code = context.args[0].upper().strip()
+    if code not in SUPPORTED_COUNTRIES:
+        supported_list = ", ".join(SUPPORTED_COUNTRIES.keys())
+        await update.message.reply_text(
+            f"Country code '{code}' not recognised.\n\n"
+            f"Supported: {supported_list}\n\n"
+            "Example: /setcountry GB"
+        )
+        return
+
+    update_restaurant_profile(chat_id, country_code=code)
+    comp_new = SUPPORTED_COUNTRIES[code]
+    # Show what changed
+    from compliance import COUNTRY_COMPLIANCE, _DEFAULT_COMPLIANCE
+    new_comp = COUNTRY_COMPLIANCE.get(code, _DEFAULT_COMPLIANCE)
+    tips_note = (
+        f"Tips Act: {new_comp['tips_law']} (3-year record retention)"
+        if new_comp.get("tips_enabled")
+        else f"Tips: no mandatory law in {comp_new}"
+    )
+
+    await update.message.reply_text(
+        f"Country updated to *{comp_new}* ({code})\n\n"
+        f"Active compliance framework:\n"
+        f"  {tips_note}\n"
+        f"  Allergen law: {new_comp['allergen_law']}\n"
+        f"  Inspection: {new_comp['inspection_body']}\n"
+        f"  Data: {new_comp['data_law']}\n\n"
+        f"All compliance commands now use {comp_new} regulations.",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
@@ -4137,6 +4278,7 @@ def main():
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
     app.add_handler(CommandHandler("currency", cmd_currency))
     app.add_handler(CommandHandler("setindustry", cmd_setindustry))
+    app.add_handler(CommandHandler("setcountry", cmd_setcountry))
     app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
@@ -4158,7 +4300,7 @@ def main():
     app.add_handler(CommandHandler("supportstatus", cmd_supportstatus))
     app.add_handler(CommandHandler("reply", cmd_reply))
 
-    # UK compliance commands
+    # Compliance commands (laws/bodies adapt to the business's country)
     app.add_handler(CommandHandler("tips", cmd_tips))
     app.add_handler(CommandHandler("tipsreport", cmd_tipsreport))
     app.add_handler(CommandHandler("inspection", cmd_inspection))

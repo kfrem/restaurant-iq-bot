@@ -58,6 +58,8 @@ def init_db():
             ("currency_code", "TEXT DEFAULT 'GBP'"),
             ("currency_symbol", "TEXT DEFAULT '£'"),
             ("industry", "TEXT DEFAULT 'restaurant'"),
+            # TradeFlow: country/jurisdiction — drives compliance feature flags
+            ("country_code", "TEXT DEFAULT 'GB'"),
         ]
         for col, col_type in _profile_cols:
             try:
@@ -268,12 +270,12 @@ def update_restaurant_profile(group_id: str, **fields):
     """Update any subset of profile fields for a restaurant.
     Allowed keys: legal_name, address, city, postcode, phone, email,
     website, company_number, vat_number, cuisine_type, num_covers,
-    num_branches, profile_complete.
+    num_branches, profile_complete, country_code.
     """
     allowed = {
         "legal_name", "address", "city", "postcode", "phone", "email",
         "website", "company_number", "vat_number", "cuisine_type",
-        "num_covers", "num_branches", "profile_complete",
+        "num_covers", "num_branches", "profile_complete", "country_code",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
