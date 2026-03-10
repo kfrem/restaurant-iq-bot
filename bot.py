@@ -450,6 +450,14 @@ def _is_skip(text: str) -> bool:
     return text.strip().lower() in _DONE_WORDS
 
 
+_FOOD_INDUSTRIES = {"restaurant", "cafe", "café", "bar", "pub", "bakery", "food truck", "takeaway", "hotel", "supermarket"}
+
+def _is_food_business(restaurant: dict) -> bool:
+    """True if this business handles food — used to show/hide food-specific commands."""
+    industry = (restaurant.get("industry") or "restaurant").lower()
+    return industry in _FOOD_INDUSTRIES
+
+
 async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /register — starts the onboarding wizard."""
     chat_id = str(update.effective_chat.id)
@@ -557,7 +565,7 @@ async def _reg_got_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"*Step 2 of 4 — Contact Details*\n"
         f"Phone number and/or email address?\n"
-        f"_(e.g. 020 7123 4567 | hello@yourbistro.com)_\n\n"
+        f"_(e.g. 020 7123 4567 | hello@yourbusiness.com)_\n\n"
         f"{_SKIP_HINT}",
         parse_mode="Markdown",
     )
@@ -1864,8 +1872,8 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /rename NewRestaurantName
-    Change the restaurant name without losing any data.
+    /rename NewBusinessName
+    Change the business name without losing any data.
     """
     restaurant = await _require_restaurant(update)
     if not restaurant:
@@ -2001,18 +2009,17 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  /import [date or range]: [what happened]\n\n"
             "Examples:\n\n"
             "Single day:\n"
-            "  /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n"
-            "  New lamb dish launched. Bidfood delivery short on salmon.\n\n"
+            "  /import 5 Jan 2025: Busy day, revenue around £1,800.\n"
+            "  New supplier started. Main van needed a repair.\n\n"
             "Fortnight:\n"
             "  /import 1 Jan to 14 Jan 2025: Quiet post-Christmas period.\n"
-            "  Revenue about £28,000, 900 covers. No major issues.\n\n"
+            "  Revenue about £22,000. No major issues.\n\n"
             "Month:\n"
-            "  /import March 2025: Revenue £72,000, 2,200 covers.\n"
-            "  Bidfood prices up 8%. Ahmed left, replaced by Sara.\n"
-            "  Kitchen deep clean week 2. Record Saturday on the 22nd.\n\n"
+            "  /import March 2025: Revenue £68,000. Main supplier prices\n"
+            "  up 8%. Ahmed left, replaced by Sara. Equipment fault week 2.\n\n"
             "Quarter:\n"
             "  /import Oct to Dec 2024: Best quarter ever. Revenue £210,000.\n"
-            "  Hired 3 staff. New menu launched November. Fridge replaced Dec.\n\n"
+            "  Hired 3 staff. New product range launched November.\n\n"
             "Repeat for each period you want to backfill."
         )
         return
@@ -2031,7 +2038,7 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not description:
         await update.message.reply_text(
             "Please include a description after the date.\n\n"
-            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Main supplier Bidfood."
+            "Example: /import March 2025: Revenue £68,000. Main supplier raised prices. Ahmed left."
         )
         return
 
@@ -2093,9 +2100,9 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entries:
         await update.message.reply_text(
             "Could not create entries from that description.\n\n"
-            "Try adding more detail — revenue, covers, supplier names, staff issues, equipment problems.\n"
-            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Bidfood main supplier. "
-            "Fridge broke week 2, repaired same day. Ahmed left 15th. New dessert menu launched."
+            "Try adding more detail — revenue, supplier names, staff issues, equipment problems.\n"
+            "Example: /import March 2025: Revenue £68,000. Main supplier raised prices. "
+            "Van broke week 2, repaired same day. Ahmed left 15th. New product range launched."
         )
         return
 
@@ -2431,6 +2438,16 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    if not _is_food_business(restaurant):
+        industry = (restaurant.get("industry") or "business").title()
+        await update.message.reply_text(
+            f"/inspection is for food businesses only (FSA Food Hygiene compliance).\n\n"
+            f"{restaurant['name']} is registered as a {industry}.\n\n"
+            f"Your compliance records are still captured automatically in your weekly report.\n"
+            f"Use /weeklyreport or /recall to review operational history."
+        )
+        return
+
     today_str = date.today().isoformat()
     cutoff_str = (date.today() - timedelta(days=90)).isoformat()
     entries = get_entries_with_staff(restaurant["id"], cutoff_str, today_str)
@@ -2503,6 +2520,15 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    if not _is_food_business(restaurant):
+        industry = (restaurant.get("industry") or "business").title()
+        await update.message.reply_text(
+            f"/allergens is for food businesses only (Natasha's Law allergen traceability).\n\n"
+            f"{restaurant['name']} is registered as a {industry}.\n"
+            f"This command does not apply to your business type."
+        )
+        return
+
     alerts = get_allergen_alerts(restaurant["id"], days_back=90)
     open_alerts = [a for a in alerts if not a["resolved"]]
     resolved_alerts = [a for a in alerts if a["resolved"]]
@@ -2558,6 +2584,10 @@ async def cmd_resolvallergen(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not restaurant:
         return
 
+    if not _is_food_business(restaurant):
+        await update.message.reply_text("/resolvallergen is for food businesses only.")
+        return
+
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text(
             "Usage: /resolvallergen [alert id]\n\n"
@@ -2588,14 +2618,44 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /features — plain-English guide to what the bot does, how to use it,
     what it captures, and what it cannot do. Split into 4 messages.
     """
+    chat_id = str(update.effective_chat.id)
+    restaurant = get_restaurant_by_group(chat_id)
+    is_food = _is_food_business(restaurant) if restaurant else True
+    cs = restaurant.get("currency_symbol", "£") if restaurant else "£"
+
+    # Industry-specific voice note example
+    if is_food:
+        voice_example1 = (
+            f"  \"Tonight revenue was around {cs}2,600. One complaint about wait time — resolved on the night.\"\n\n"
+            f"  \"Delivery short by 10kg. Invoice was {cs}290. Fridge in the back is making a noise.\"\n\n"
+        )
+        text_examples = (
+            f"  \"Main supplier raised prices by 9% this week\"\n"
+            f"  \"Ahmed was 40 mins late — third time this month\"\n"
+            f"  \"New dish selling really well, customers loving it\"\n"
+            f"  \"Saturday: {cs}3,250 takings\""
+        )
+        waste_line = "  Stock-outs and waste — reveals over/under ordering patterns.\n"
+    else:
+        voice_example1 = (
+            f"  \"Good day today — revenue around {cs}1,800. Two new customers, both said they'll be back.\"\n\n"
+            f"  \"Supplier delivery came in short. Invoice was {cs}340. One of the machines needs a service.\"\n\n"
+        )
+        text_examples = (
+            f"  \"Main supplier raised prices by 8% this week\"\n"
+            f"  \"Sara was late again — third time this month\"\n"
+            f"  \"New product line going really well, clients love it\"\n"
+            f"  \"Thursday: {cs}1,650 revenue\""
+        )
+        waste_line = "  Stock-outs and shortages — reveals supply and demand patterns.\n"
 
     # Message 1: What you can send
     await update.message.reply_text(
-        "RESTAURANT IQ — HOW IT WORKS\n"
+        "TRADEFLOW — HOW IT WORKS\n"
         "════════════════════════════════════\n\n"
         "Your team sends messages to this group as normal.\n"
         "TradeFlow reads every message, extracts the useful data,\n"
-        "and builds a picture of your restaurant's week.\n"
+        "and builds a picture of your week.\n"
         "No forms. No spreadsheets. Just talk.\n\n"
         "────────────────────────────────────\n"
         "WHAT YOU CAN SEND\n"
@@ -2604,45 +2664,37 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Hold the mic button in Telegram and speak.\n"
         "Any team member can do this — no training needed.\n\n"
         "Good examples:\n"
-        "  \"Tonight we did 82 covers. Revenue around £2,600. "
-        "Lamb sold out by 8pm. One complaint about wait time on table 4.\"\n\n"
-        "  \"Delivery from Metro Supplies. Short on salmon — only 6kg of the "
-        "14kg ordered. Invoice was £290.\"\n\n"
-        "  \"Fridge in prep kitchen is making a noise. Needs checking tomorrow.\"\n\n"
+        + voice_example1 +
+        "  \"Machine fault this morning — engineer booked for tomorrow.\"\n\n"
         "2. INVOICE OR RECEIPT PHOTOS\n"
         "Photograph any invoice or delivery note and send it here.\n"
         "The AI reads supplier, total, VAT and line items automatically.\n"
         "It starts tracking the payment due date straight away.\n\n"
-        "Works for: supplier invoices, delivery dockets, utility bills, repair invoices.\n"
+        "Works for: supplier invoices, delivery notes, utility bills, repair invoices.\n"
         "Best results: photo flat, good light, all four corners visible.\n\n"
         "3. TEXT MESSAGES\n"
         "Type anything — TradeFlow captures and categorises it.\n\n"
         "Examples:\n"
-        "  \"Butcher raised beef prices by 9% this week\"\n"
-        "  \"Ahmed was 40 mins late — third time this month\"\n"
-        "  \"Truffle arancini selling really well, customers loving it\"\n"
-        "  \"Saturday: 96 covers, £3,250 takings\""
+        + text_examples
     )
 
     # Message 2: What gets extracted + limitations
     await update.message.reply_text(
-        "WHAT RESTAURANT IQ EXTRACTS AUTOMATICALLY\n"
+        "WHAT TRADEFLOW EXTRACTS AUTOMATICALLY\n"
         "══════════════════════════════════════\n\n"
         "You don't need a special format. The AI understands plain speech.\n\n"
         "REVENUE\n"
-        "  Covers and takings from any message.\n"
-        "  \"Did 90 covers, took about £3,100\" → logged as revenue.\n\n"
+        f"  Income and takings from any message — logged automatically.\n"
+        f"  \"Took about {cs}2,100 today\" → logged as revenue.\n\n"
         "COSTS\n"
         "  Invoice totals from photos — recorded to the penny.\n"
         "  Price increases mentioned in voice or text — flagged for review.\n\n"
-        "WASTE\n"
-        "  Items that sold out (86'd) — reveals over/under ordering patterns.\n"
-        "  Food waste mentioned explicitly — logged by date.\n\n"
+        "STOCK & SUPPLY\n"
+        + waste_line +
+        "  Supplier issues: short deliveries, price changes, quality problems.\n\n"
         "STAFF\n"
         "  Lateness, absences, performance concerns — logged with date.\n"
         "  Positive mentions captured too — a record of who is doing well.\n\n"
-        "SUPPLIER ISSUES\n"
-        "  Short deliveries, quality problems, price changes — all flagged.\n\n"
         "EQUIPMENT & OPERATIONS\n"
         "  Kit faults, complaints, compliments — stored and summarised weekly.\n\n"
         "URGENCY FLAG on every entry:\n"
@@ -2656,8 +2708,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  ✗ Staff hours or wages — no labour cost tracking\n"
         "  ✗ Till or EPOS data — no integration with payment systems\n"
         "  ✗ Blurry or dark invoice photos — AI cannot read unclear images\n"
-        "  ✗ Non-English voice notes — transcription works best in English\n"
-        "  ✗ Multiple currencies — assumes £ throughout"
+        "  ✗ Non-English voice notes — transcription works best in English"
     )
 
     # Message 3: Commands
@@ -2666,7 +2717,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "═════════════════════\n\n"
         "/weeklyreport\n"
         "  Full AI briefing for the current week.\n"
-        "  Covers: revenue, cost alerts, waste patterns, staff issues,\n"
+        "  Includes: revenue, cost alerts, stock issues, staff incidents,\n"
         "  supplier flags, and a numbered action list by financial impact.\n"
         "  Also sends a branded PDF you can save, print or share.\n\n"
         "/financials [period]\n"
@@ -2693,31 +2744,51 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  Run /demoreset to clear it when done."
     )
 
-    # Message 3b: UK compliance commands
+    # Message 3b: UK compliance commands (food-specific sections only shown for food businesses)
+    food_compliance = ""
+    if is_food:
+        food_compliance = (
+            "\n/allergens\n"
+            "  Allergen traceability log for the last 90 days.\n"
+            "  Alerts are raised automatically when the AI detects a supplier\n"
+            "  change, ingredient substitution, or new product on an invoice.\n"
+            "  Natasha's Law: you must update allergen declarations when\n"
+            "  ingredients or suppliers change. Unlimited fines for failures.\n\n"
+            "/resolvallergen [id]\n"
+            "  Mark an allergen alert as reviewed and resolved.\n"
+            "  Resolved alerts remain in your traceability record.\n\n"
+            "/inspection\n"
+            "  FSA Food Hygiene inspection readiness report.\n"
+            "  Analyses your last 90 days of entries and produces a structured\n"
+            "  report covering: supplier traceability, equipment logs, temperature\n"
+            "  incidents, allergen flags, staff records, and compliance gaps.\n"
+            "  EHOs look for exactly this documentation — a 5-star rating\n"
+            "  requires evidence of consistent record-keeping.\n"
+            "  Run before every inspection or quarterly as a health check.\n"
+        )
+
     await update.message.reply_text(
         "UK LEGAL COMPLIANCE COMMANDS\n"
         "══════════════════════════════\n\n"
-        "These features are unique to TradeFlow and built specifically\n"
-        "for UK legal requirements that every restaurant must meet.\n\n"
+        "These features are built specifically for UK legal requirements.\n\n"
         "/import [date range]: [description]\n"
         "  Import any historical period in plain English.\n"
         "  Works for a single day, a fortnight, a month, a quarter, or more.\n"
         "  The AI creates proportional dated entries from your description.\n\n"
         "  A single day:\n"
-        "    /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n\n"
+        f"    /import 5 Jan 2025: Good day, {cs}1,800 revenue. Short delivery from main supplier.\n\n"
         "  A fortnight:\n"
-        "    /import 1 Jan to 14 Jan 2025: Quiet period, £28,000 revenue,\n"
-        "    900 covers. Bidfood main supplier. No major incidents.\n\n"
+        "    /import 1 Jan to 14 Jan 2025: Quiet period, revenue around\n"
+        f"    {cs}22,000. New supplier started. No major incidents.\n\n"
         "  A month:\n"
-        "    /import March 2025: Revenue £72,000, 2,200 covers.\n"
-        "    Bidfood prices up 8%. Ahmed left, Sara started 20th.\n"
-        "    Record Saturday on the 22nd — 98 covers.\n\n"
+        f"    /import March 2025: Revenue {cs}68,000. Main supplier raised\n"
+        "    prices 8%. Sara left, replaced by James. Equipment fault week 2.\n\n"
         "  A quarter:\n"
-        "    /import Oct to Dec 2024: Revenue £210,000. Hired 3 staff.\n"
-        "    New menu in November. Fridge replaced in December.\n\n"
+        f"    /import Oct to Dec 2024: Revenue {cs}210,000. Hired 3 staff.\n"
+        "    New product range launched November. Best month ever in December.\n\n"
         "  Run /import again for each period. Use /recall to check results.\n\n"
         "/rename [name]\n"
-        "  Change the restaurant name without losing any data.\n\n"
+        "  Change the business name without losing any data.\n\n"
         "/cleardata CONFIRM\n"
         "  Delete all entries and start fresh. Registration is kept.\n\n"
         "/tips [period]\n"
@@ -2729,34 +2800,40 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/tipsreport [period]\n"
         "  Generate a formal Tips Act compliance record.\n"
         "  Any staff member can request this record. Have it ready.\n"
-        "  Try: /tipsreport   /tipsreport last month\n\n"
-        "/allergens\n"
-        "  Allergen traceability log for the last 90 days.\n"
-        "  Alerts are raised automatically when the AI detects a supplier\n"
-        "  change, ingredient substitution, or new product on an invoice.\n"
-        "  Natasha's Law: you must update allergen declarations when\n"
-        "  ingredients or suppliers change. Unlimited fines for failures.\n\n"
-        "/resolvallergen [id]\n"
-        "  Mark an allergen alert as reviewed and resolved.\n"
-        "  Resolved alerts remain in your traceability record.\n\n"
-        "/inspection\n"
-        "  FSA Food Hygiene inspection readiness report.\n"
-        "  Analyses your last 90 days of entries and produces a structured\n"
-        "  report covering: supplier traceability, equipment logs, temperature\n"
-        "  incidents, allergen flags, staff records, and compliance gaps.\n"
-        "  EHOs look for exactly this documentation — a 5-star rating\n"
-        "  requires evidence of consistent record-keeping.\n"
-        "  Run before every inspection or quarterly as a health check."
+        "  Try: /tipsreport   /tipsreport last month"
+        + food_compliance
     )
 
     # Message 4: How to get the most out of it
+    if is_food:
+        best_habit = (
+            "THE MOST VALUABLE HABIT:\n"
+            "End-of-shift voice note from whoever closes up.\n"
+            "Even 30 seconds on revenue, any issues, and how service felt\n"
+            "gives the AI enough to produce sharp weekly insights.\n\n"
+        )
+        good_entry = (
+            "  ✅ \"Good Friday — revenue around £1,800. One complaint, handled well. Stock running low on X.\"\n\n"
+            "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
+            "  ✅ \"Equipment alarm at 6am — engineer confirmed false alarm.\"\n\n"
+        )
+    else:
+        best_habit = (
+            "THE MOST VALUABLE HABIT:\n"
+            "End-of-day voice note from whoever closes up.\n"
+            "Even 30 seconds on revenue, any issues, and the feel of the day\n"
+            "gives the AI enough to produce sharp weekly insights.\n\n"
+        )
+        good_entry = (
+            f"  ✅ \"Good day — revenue around {cs}1,800. Two new clients. Running low on X.\"\n\n"
+            "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
+            "  ✅ \"Van broke down this morning — repaired same day, back on road by 11.\"\n\n"
+        )
+
     await update.message.reply_text(
         "HOW TO GET THE MOST OUT OF IT\n"
         "══════════════════════════════\n\n"
-        "THE MOST VALUABLE HABIT:\n"
-        "End-of-shift voice note from whoever closes the restaurant.\n"
-        "Even 30 seconds covering covers, any issues, and the feel of service\n"
-        "gives the AI enough to produce sharp weekly insights.\n\n"
+        + best_habit +
         "INVOICES:\n"
         "Photograph every invoice the day it arrives — not in batches.\n"
         "TradeFlow tracks due dates from the invoice date, so late uploads\n"
@@ -2764,12 +2841,9 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "YOUR TEAM:\n"
         "Add all staff to this Telegram group.\n"
         "TradeFlow records who sent each update, so the weekly report\n"
-        "can link issues and wins to the right shifts and people.\n\n"
+        "can link issues and wins to the right people.\n\n"
         "WHAT GOOD ENTRIES LOOK LIKE:\n"
-        "  ✅ \"Friday lunch: 44 covers, £1,180. Veg soup sold out at 1pm.\n"
-        "       Two tables complimented the new sea bass.\"\n\n"
-        "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
-        "  ✅ \"Walk-in fridge alarm at 6am — engineer confirmed false alarm.\"\n\n"
+        + good_entry +
         "WHAT GETS IGNORED:\n"
         "  ✗ Short replies like \"ok\" or \"thanks\" — no useful data\n"
         "  ✗ Forwarded articles or links\n"
@@ -2998,11 +3072,19 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     trends = get_eightysix_trends(restaurant["id"], start_date, end_date)
 
+    is_food = _is_food_business(restaurant)
+    item_label = "86'd Items" if is_food else "Stock-Outs"
+
     if not trends:
-        await update.message.reply_text(
-            f"No 86'd items recorded for {period_label}.\n\n"
-            "Items are logged automatically when your team mentions running out of something.\n"
+        example = (
             "Example voice note: \"We 86'd the salmon at 7pm, ran out of the lamb too.\""
+            if is_food else
+            "Example: \"Ran out of the blue ink cartridges\" or \"Last set of large overalls sold today.\""
+        )
+        await update.message.reply_text(
+            f"No {item_label.lower()} recorded for {period_label}.\n\n"
+            "Items are logged automatically when your team mentions running out of something.\n"
+            + example
         )
         return
 
@@ -3011,16 +3093,25 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bar = "█" * min(count, 10)
         lines.append(f"  {bar} {count}×  {item.title()}")
 
+    use_for = (
+        "Use this for:\n"
+        "  - Ordering: increase PAR levels for frequently 86'd items\n"
+        "  - Menu: consider removing items that always run out early\n"
+        "  - Pricing: popular items that 86 early may support a price increase"
+        if is_food else
+        "Use this for:\n"
+        "  - Ordering: increase stock levels for frequently run-out items\n"
+        "  - Forecasting: spot demand patterns to avoid future stockouts\n"
+        "  - Pricing: high-demand items may support a price review"
+    )
+
     await update.message.reply_text(
-        f"86'd Items — {restaurant['name']}\n"
+        f"{item_label} — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 36}\n\n"
         + "\n".join(lines)
         + f"\n\nTotal unique items: {len(trends)}\n\n"
-        "Use this for:\n"
-        "  - Ordering: increase PAR for frequently 86'd items\n"
-        "  - Menu: consider removing or reducing portion sizes on items that always run out\n"
-        "  - Pricing: popular items that 86 early may support a price increase"
+        + use_for
     )
 
 
@@ -3244,7 +3335,8 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         writer = csv.writer(output)
-        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue (£)", "Covers"])
+        cs_header = f"Revenue ({restaurant.get('currency_symbol', '£')})"
+        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", cs_header, "Qty/Footfall"])
 
         for e in entries:
             summary = urgency = revenue = covers = ""
