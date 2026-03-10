@@ -803,15 +803,46 @@ Use plain English, no jargon. Keep your answer under 200 words."""
 
 def generate_tips_report(tips_events: list, summary: dict,
                          restaurant_name: str, period_label: str,
-                         currency_symbol: str = "£") -> str:
+                         currency_symbol: str = "£",
+                         compliance: dict | None = None) -> str:
     """
-    Generate a Tips Act compliant monthly allocation record.
-    Employment (Allocation of Tips) Act 2023 — in force October 2024.
+    Generate a tips record for the given period.
+    If compliance is provided, the record references the correct law for the business's country.
+    compliance should be the result of compliance.get_compliance(restaurant).
     """
     tier = _select_tier()
     provider = tier["provider"]
 
     cs = currency_symbol
+    comp = compliance or {}
+
+    # Build the law context block from the compliance config, not from hardcoded strings
+    tips_law = comp.get("tips_law")
+    tips_summary = comp.get("tips_summary", "Tips records are kept for staff transparency.")
+    retention_years = comp.get("tips_retention_years", 0)
+
+    if tips_law:
+        law_context = (
+            f"LEGAL CONTEXT — {tips_law}:\n"
+            f"{tips_summary}\n"
+            + (f"Records must be kept for {retention_years} years.\n" if retention_years else "")
+        )
+        compliance_section = (
+            f"### Compliance Statement\n"
+            f"A short statement confirming compliance with {tips_law}. "
+            f"Include: tips passed to staff, method of allocation, record retention commitment."
+        )
+    else:
+        law_context = (
+            "TIPS RECORD NOTE:\n"
+            f"{tips_summary}\n"
+            "This record is kept for internal transparency and staff reference."
+        )
+        compliance_section = (
+            "### Notes\n"
+            "Any observations about tips allocation practices or staff communications."
+        )
+
     events_block = ""
     if tips_events:
         lines = []
@@ -826,14 +857,10 @@ def generate_tips_report(tips_events: list, summary: dict,
     else:
         events_block = "  No individual tip events recorded for this period."
 
-    prompt = f"""You are TradeFlow, generating a tips compliance record for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, generating a tips record for "{restaurant_name}".
 Use {cs} for all monetary values in your response.
 
-UK LAW CONTEXT (Employment (Allocation of Tips) Act 2023, in force October 2024):
-- Employers must pass 100% of customer tips to workers, with no deductions.
-- A written tips policy is required.
-- Records must be kept for 3 years and provided to any worker who requests them.
-- Workers can request their tip allocation records at any time.
+{law_context}
 
 PERIOD: {period_label}
 
@@ -847,9 +874,9 @@ PERIOD TOTALS:
   TOTAL:        {cs}{summary.get('total', 0):.2f}
   Events logged: {summary.get('events', 0)}
 
-Write a formal compliance record with these sections:
+Write a formal tips record with these sections:
 
-## TIPS ALLOCATION RECORD — {restaurant_name.upper()}
+## TIPS RECORD — {restaurant_name.upper()}
 ## Period: {period_label}
 
 ### Summary
@@ -858,15 +885,12 @@ Total tips received, split by type, and number of recorded events.
 ### Allocation Events
 List each event from the data above in a clear table format.
 
-### Compliance Statement
-A short statement confirming tips policy compliance under the Employment (Allocation of Tips) Act 2023.
-Include: tips passed to staff in full, method of allocation, record retention commitment.
+{compliance_section}
 
 ### Action Items
-Any gaps in records or steps needed to ensure full compliance.
+Any gaps in records or steps needed for completeness.
 
-Note: Be specific about the legal requirements. This document may be requested by any staff member.
-Use £ for all currency. Plain text format, no filler."""
+Plain text format, no filler. Use {cs} for all currency amounts."""
 
     try:
         if provider == "groq":
@@ -888,14 +912,26 @@ Use £ for all currency. Plain text format, no filler."""
 
 
 def generate_inspection_report(entries_data: list, restaurant_name: str,
-                               business_type: str = "restaurant") -> str:
+                               business_type: str = "restaurant",
+                               compliance: dict | None = None) -> str:
     """
     Generate a compliance/inspection preparation report.
     Groups all compliance-relevant entries: supplier changes, equipment faults,
     temperature incidents, cleaning issues, staff incidents, allergen alerts.
+    compliance should be the result of compliance.get_compliance(restaurant).
     """
     tier = _select_tier()
     provider = tier["provider"]
+
+    comp = compliance or {}
+    inspection_body = comp.get("inspection_body", "the relevant food safety authority")
+    inspection_officers = comp.get("inspection_officers", "inspectors")
+    hygiene_scheme = comp.get("hygiene_scheme", "the local hygiene rating scheme")
+    inspection_summary = comp.get(
+        "inspection_summary",
+        "Inspectors review supplier records, equipment logs, allergen declarations, and staff training."
+    )
+    allergen_law = comp.get("allergen_law", "local allergen regulations")
 
     lines = []
     for e in entries_data:
@@ -912,6 +948,12 @@ def generate_inspection_report(entries_data: list, restaurant_name: str,
 
     prompt = f"""You are TradeFlow, preparing a compliance readiness report for "{restaurant_name}" ({business_type}).
 
+INSPECTION AUTHORITY: {inspection_body}
+INSPECTORS ARE CALLED: {inspection_officers}
+HYGIENE SCHEME: {hygiene_scheme}
+WHAT INSPECTORS LOOK FOR: {inspection_summary}
+ALLERGEN REGULATION: {allergen_law}
+
 These are all operational entries recorded in the last 90 days:
 
 {entries_block}
@@ -919,14 +961,16 @@ These are all operational entries recorded in the last 90 days:
 Write a COMPLIANCE & INSPECTION READINESS REPORT:
 
 ## INSPECTION READINESS — {restaurant_name.upper()}
+## Inspection authority: {inspection_body}
 ## Generated: today
 
 ### Overall Readiness Assessment
 A brief verdict: Ready / Needs Attention / Action Required. 1-2 sentences.
+Reference what {inspection_officers} from {inspection_body} specifically look for.
 
 ### Supplier Traceability Log
 List all supplier changes, new suppliers, and delivery issues from the entries.
-Regulators ask for evidence of approved supplier lists and traceability records.
+{inspection_body} requires evidence of approved supplier lists and traceability records.
 
 ### Equipment & Maintenance Log
 List all equipment faults, repairs, and safety-related issues with dates.
@@ -935,15 +979,16 @@ Include temperature control equipment, pest control, and cleaning records where 
 ### Staff & Training Notes
 Any staff incidents, training mentions, or compliance observations from entries.
 
-### Product/Food Safety Incidents
+### Food Safety Incidents
 Any temperature concerns, cold chain issues, or product safety incidents.
 
 ### Allergen & Product Traceability
-Any supplier changes or product substitutions that could affect allergen or ingredient declarations.
+Any supplier changes or product substitutions that could affect allergen declarations.
+Reference {allergen_law} requirements.
 
 ### Gaps in Documentation
-What a regulator would likely flag as missing based on these records.
-Be direct — gaps in records cost compliance rating points.
+What {inspection_officers} would likely flag as missing based on these records.
+Be direct — gaps in records affect the {hygiene_scheme} rating.
 
 ### Pre-Inspection Action List
 Numbered list of specific steps to take before the next inspection or audit.

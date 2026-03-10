@@ -16,12 +16,13 @@ Handles:
   - /demo               — load a realistic week of demo data for client presentations
   - /demoreset          — remove all demo data from this chat
 
-UK Legal Compliance (unique to TradeFlow):
-  - /tips [period]      — tip events log (Employment (Allocation of Tips) Act 2023)
-  - /tipsreport         — formal Tips Act compliance record (3-year retention duty)
-  - /allergens          — allergen traceability log (Natasha's Law / FSA)
+Compliance commands (laws and regulatory bodies adapt per country — see compliance.py):
+  - /tips [period]      — tip events log (law reference from compliance.py)
+  - /tipsreport         — formal tips compliance record
+  - /allergens          — allergen traceability log (food businesses only)
   - /resolvallergen [id]— mark an allergen alert as reviewed and resolved
-  - /inspection         — FSA Food Hygiene inspection readiness report (90-day analysis)
+  - /inspection         — inspection readiness report (food businesses only)
+  - /setcountry [code]  — set country to use correct laws/bodies (auto-detected from VAT)
   - /import [dates]: [description] — import historical data for any period (day, fortnight, month, quarter, etc)
 
 Message types:
@@ -126,6 +127,15 @@ from model_router import (
 )
 from report_generator import generate_pdf_report
 from demo_data import get_demo_entries, DEMO_STAFF
+from compliance import (
+    get_compliance, infer_country, get_country_display, country_from_vat_number,
+    is_food_business, tips_enabled, allergen_enabled, inspection_enabled,
+    SUPPORTED_COUNTRIES, COUNTRY_REGIONS, INDUSTRY_HIERARCHY,
+    SUBSECTOR_TO_SECTOR, SUBSECTOR_IS_FOOD,
+    FEATURE_CATALOGUE, get_applicable_features, feature_enabled,
+    build_compliance_summary,
+)
+from translations import t, get_lang, infer_lang_from_telegram
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -440,72 +450,163 @@ async def _onboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Registration conversation states ──────────────────────────────────────────
-REG_NAME, REG_LOCATION, REG_CONTACT, REG_LEGAL, REG_BUSINESS = range(5)
+# 10-step wizard: country → region → language → sector → subsector
+#                 → name → location → contact → legal → features
+(
+    REG_COUNTRY,
+    REG_SUBREGION,
+    REG_LANGUAGE,
+    REG_SECTOR,
+    REG_SUBSECTOR,
+    REG_NAME,
+    REG_LOCATION,
+    REG_CONTACT,
+    REG_LEGAL,
+    REG_FEATURES,
+) = range(10)
 
-_SKIP_HINT = "Reply with the details, or type *skip* to move on."
-_DONE_WORDS = {"skip", "done", "next", "no", "n", "/skip", "/done"}
+# Legacy aliases so any code outside the wizard that still references old names works
+REG_BUSINESS = REG_NAME  # was the old final step
+
+_DONE_WORDS = {"skip", "done", "next", "no", "n", "/skip", "/done",
+               "ignorer", "passer", "sauter"}  # French skip words
 
 
 def _is_skip(text: str) -> bool:
     return text.strip().lower() in _DONE_WORDS
 
 
-async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for /register — starts the onboarding wizard."""
+def _rl(context) -> str:
+    """Return the current registration language from user_data (default 'en')."""
+    return context.user_data.get("reg_lang", "en")
+
+
+# ── Registration helper: build inline keyboard for countries ──────────────────
+
+def _country_keyboard() -> InlineKeyboardMarkup:
+    flags = {
+        "GB": "🇬🇧", "US": "🇺🇸", "AU": "🇦🇺", "EU": "🇪🇺",
+        "NG": "🇳🇬", "KE": "🇰🇪", "ZA": "🇿🇦",
+        "GH": "🇬🇭", "UG": "🇺🇬", "TZ": "🇹🇿",
+    }
+    buttons = []
+    row = []
+    for code, name in SUPPORTED_COUNTRIES.items():
+        flag = flags.get(code, "🌍")
+        row.append(InlineKeyboardButton(f"{flag} {name}", callback_data=f"rc:{code}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+
+def _region_keyboard(country_code: str, lang: str = "en") -> InlineKeyboardMarkup:
+    regions = COUNTRY_REGIONS.get(country_code, [])
+    if not regions:
+        return None
+    buttons = []
+    for region in regions:
+        # Truncate callback_data if needed (Telegram max 64 bytes)
+        cd = f"rr:{region[:58]}"
+        buttons.append([InlineKeyboardButton(region, callback_data=cd)])
+    # Skip button at bottom
+    buttons.append([InlineKeyboardButton(t("reg.skip_btn", lang), callback_data="rr:__skip__")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇬🇧 English", callback_data="rl:en"),
+            InlineKeyboardButton("🇫🇷 Français", callback_data="rl:fr"),
+        ]
+    ])
+
+
+def _sector_keyboard(lang: str = "en") -> InlineKeyboardMarkup:
+    buttons = []
+    for sector_key, data in INDUSTRY_HIERARCHY.items():
+        label = t(data["label_key"], lang)
+        emoji = data["emoji"]
+        buttons.append([InlineKeyboardButton(
+            f"{emoji} {label}", callback_data=f"rs:{sector_key[:58]}"
+        )])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _subsector_keyboard(sector_key: str, lang: str = "en") -> InlineKeyboardMarkup:
+    sector = INDUSTRY_HIERARCHY.get(sector_key, {})
+    sub_sectors = sector.get("sub_sectors", {})
+    buttons = []
+    for sub_key, label_key in sub_sectors.items():
+        label = t(label_key, lang)
+        buttons.append([InlineKeyboardButton(label, callback_data=f"rss:{sub_key[:58]}")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _features_keyboard(restaurant: dict | None, industry_key: str,
+                        disabled: list, lang: str = "en") -> InlineKeyboardMarkup:
+    """
+    Build a toggleable features keyboard.
+    disabled = list of currently-disabled feature keys.
+    Shows universal features + food features if applicable.
+    """
+    is_food = SUBSECTOR_IS_FOOD.get(industry_key, False) if restaurant is None else is_food_business(restaurant)
+    buttons = []
+    for key, meta in FEATURE_CATALOGUE.items():
+        if meta["food_only"] and not is_food:
+            continue
+        status = "✅" if key not in disabled else "❌"
+        label = t(meta["label_key"], lang)
+        buttons.append([InlineKeyboardButton(
+            f"{status} {label}", callback_data=f"rf:t:{key[:50]}"
+        )])
+    # Confirm button
+    buttons.append([InlineKeyboardButton(t("reg.features.save_btn", lang), callback_data="rf:ok")])
+    return InlineKeyboardMarkup(buttons)
+
+
+# Industry/compliance helpers — defined in compliance.py, aliased here for convenience
+def _is_food_business(restaurant: dict) -> bool:
+    return is_food_business(restaurant)
+
+
+async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):  # noqa: C901
+    """Entry point for /register — starts the 10-step onboarding wizard."""
     chat_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
     existing = get_restaurant_by_group(chat_id)
 
-    # Already registered — offer to update profile or just rename
+    # Already registered
     if existing:
-        name_given = " ".join(context.args) if context.args else ""
-        if name_given and name_given != existing["name"]:
-            update_restaurant_name(chat_id, name_given)
-            register_staff(existing["id"], user_id, update.effective_user.first_name or "Owner", "owner")
-            await update.message.reply_text(
-                f"Name updated to: *{name_given}*\n\n"
-                f"All existing data is preserved.\n"
-                f"Use /status to check your data.",
-                parse_mode="Markdown",
-            )
-        else:
-            await update.message.reply_text(
-                f"*{existing['name']}* is already registered.\n\n"
-                f"Use /rename to change the name.\n"
-                f"Use /profile to update your company details.",
-                parse_mode="Markdown",
-            )
-        return ConversationHandler.END
-
-    # New registration — if name was given inline, skip straight to profile
-    if context.args:
-        name = " ".join(context.args)
-        _do_register(name, chat_id, user_id, update.effective_user.first_name)
-        context.user_data["reg_chat_id"] = chat_id
+        lang = get_lang(existing)
         await update.message.reply_text(
-            f"*{name}* is now registered and TradeFlow is live!\n\n"
-            f"Team members can start sending voice notes, photos and texts right away.\n\n"
-            f"Tip: run /currency to set your local currency (default: GBP).\n\n"
-            f"─────────────────────\n"
-            f"*Optional: Complete your company profile*\n"
-            f"Adding your details means they appear on every report.\n\n"
-            f"*Step 1 of 4 — Location*\n"
-            f"What is your address? Include street, city and postcode.\n\n"
-            f"{_SKIP_HINT}",
+            t("reg.already_registered", lang, name=existing["name"]),
             parse_mode="Markdown",
         )
-        return REG_LOCATION
+        return ConversationHandler.END
 
-    # No name given — ask for it
-    await update.message.reply_text(
-        "*Welcome to TradeFlow!*\n\n"
-        "Let's get you set up. This takes about 2 minutes.\n"
-        "You can skip any optional step.\n\n"
-        "*What is your business trading name?*",
-        parse_mode="Markdown",
-    )
+    # Detect initial language from Telegram user locale
+    tg_lang = getattr(update.effective_user, "language_code", None)
+    lang = infer_lang_from_telegram(tg_lang)
+    context.user_data.clear()
     context.user_data["reg_chat_id"] = chat_id
     context.user_data["reg_user_id"] = user_id
+    context.user_data["reg_lang"] = lang
+
+    # Welcome + step 1: country
+    await update.message.reply_text(
+        t("reg.welcome", lang),
+        parse_mode="Markdown",
+    )
+    await update.message.reply_text(
+        t("reg.country.prompt", lang),
+        reply_markup=_country_keyboard(),
+        parse_mode="Markdown",
+    )
+    return REG_COUNTRY
     return REG_NAME
 
 
@@ -516,190 +617,450 @@ def _do_register(name: str, chat_id: str, user_id: str, first_name: str):
         register_staff(restaurant["id"], user_id, first_name or "Owner", "owner")
 
 
+# ── Step 1 callback: country selected ────────────────────────────────────────
+
+async def _reg_cb_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _rl(context)
+    code = query.data.split(":", 1)[1]   # "rc:GB" → "GB"
+
+    if code not in SUPPORTED_COUNTRIES:
+        await query.message.reply_text(t("reg.country.not_found", lang))
+        return REG_COUNTRY
+
+    country_name = SUPPORTED_COUNTRIES[code]
+    # Auto-set currency from country
+    # country → default currency
+    _COUNTRY_TO_CURRENCY = {
+        "GB": ("GBP", "£"), "US": ("USD", "$"), "AU": ("AUD", "A$"),
+        "EU": ("EUR", "€"), "NG": ("NGN", "₦"), "KE": ("KES", "KSh"),
+        "ZA": ("ZAR", "R"), "GH": ("GHS", "₵"), "UG": ("UGX", "USh"), "TZ": ("TZS", "TSh"),
+    }
+    currency_code, currency_symbol = _COUNTRY_TO_CURRENCY.get(code, ("USD", "$"))
+
+    context.user_data["reg_country"] = code
+    context.user_data["reg_currency_code"] = currency_code
+    context.user_data["reg_currency_symbol"] = currency_symbol
+
+    await query.message.reply_text(
+        t("reg.country.confirmed", lang,
+          country=country_name, currency=f"{currency_symbol} ({currency_code})"),
+        parse_mode="Markdown",
+    )
+
+    # Step 2: sub-region
+    regions = COUNTRY_REGIONS.get(code)
+    if regions:
+        await query.message.reply_text(
+            t("reg.region.prompt", lang),
+            reply_markup=_region_keyboard(code, lang),
+            parse_mode="Markdown",
+        )
+    else:
+        await query.message.reply_text(
+            t("reg.region.skip_hint", lang),
+            parse_mode="Markdown",
+        )
+    return REG_SUBREGION
+
+
+# ── Step 2: sub-region via callback or free text ──────────────────────────────
+
+async def _reg_cb_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles inline button tap for region selection."""
+    query = update.callback_query
+    await query.answer()
+    lang = _rl(context)
+    region = query.data.split(":", 1)[1]   # "rr:London" → "London"
+
+    if region != "__skip__":
+        context.user_data["reg_region"] = region
+        await query.message.reply_text(
+            t("reg.region.confirmed", lang, region=region),
+            parse_mode="Markdown",
+        )
+
+    # Step 3: language
+    await query.message.reply_text(
+        t("reg.language.prompt", lang),
+        reply_markup=_language_keyboard(),
+        parse_mode="Markdown",
+    )
+    return REG_LANGUAGE
+
+
+async def _reg_text_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles typed region name."""
+    lang = _rl(context)
+    text = update.message.text.strip()
+    if not _is_skip(text):
+        context.user_data["reg_region"] = text
+        await update.message.reply_text(
+            t("reg.region.confirmed", lang, region=text),
+            parse_mode="Markdown",
+        )
+    # Step 3: language
+    await update.message.reply_text(
+        t("reg.language.prompt", lang),
+        reply_markup=_language_keyboard(),
+        parse_mode="Markdown",
+    )
+    return REG_LANGUAGE
+
+
+# ── Step 3 callback: language selected ───────────────────────────────────────
+
+async def _reg_cb_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang_choice = query.data.split(":", 1)[1]   # "rl:en" → "en"
+    if lang_choice not in ("en", "fr"):
+        lang_choice = "en"
+
+    context.user_data["reg_lang"] = lang_choice   # all subsequent steps use this
+    await query.message.reply_text(
+        t("reg.language.confirmed", lang_choice),
+        parse_mode="Markdown",
+    )
+
+    # Step 4: sector
+    await query.message.reply_text(
+        t("reg.sector.prompt", lang_choice),
+        reply_markup=_sector_keyboard(lang_choice),
+        parse_mode="Markdown",
+    )
+    return REG_SECTOR
+
+
+# ── Step 4 callback: sector selected ─────────────────────────────────────────
+
+async def _reg_cb_sector(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _rl(context)
+    sector_key = query.data.split(":", 1)[1]   # "rs:food_beverage" → "food_beverage"
+
+    if sector_key not in INDUSTRY_HIERARCHY:
+        await query.message.reply_text(t("reg.sector.not_found", lang))
+        return REG_SECTOR
+
+    context.user_data["reg_sector"] = sector_key
+
+    # Step 5: sub-sector
+    await query.message.reply_text(
+        t("reg.subsector.prompt", lang),
+        reply_markup=_subsector_keyboard(sector_key, lang),
+        parse_mode="Markdown",
+    )
+    return REG_SUBSECTOR
+
+
+# ── Step 5 callback: sub-sector selected ─────────────────────────────────────
+
+async def _reg_cb_subsector(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _rl(context)
+    sub_key = query.data.split(":", 1)[1]   # "rss:restaurant" → "restaurant"
+
+    context.user_data["reg_subsector"] = sub_key
+
+    # Step 6: business name
+    await query.message.reply_text(
+        t("reg.name.prompt", lang),
+        parse_mode="Markdown",
+    )
+    return REG_NAME
+
+
+# ── Step 6: business name (text) ──────────────────────────────────────────────
+
 async def _reg_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _rl(context)
     name = update.message.text.strip()
     if not name or name.startswith("/"):
-        await update.message.reply_text("Please enter a name for your restaurant.")
+        prompt = "What is your business name?" if lang == "en" else "Quel est le nom de votre entreprise ?"
+        await update.message.reply_text(prompt)
         return REG_NAME
 
     chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
-    user_id = str(update.effective_user.id)
-    _do_register(name, chat_id, user_id, update.effective_user.first_name)
+    user_id = context.user_data.get("reg_user_id", str(update.effective_user.id))
 
+    # Register with all accumulated data
+    _do_register(name, chat_id, user_id, update.effective_user.first_name)
+    restaurant = get_restaurant_by_group(chat_id)
+
+    if restaurant:
+        # Apply country, currency, language, sector, sub-sector from collected data
+        country_code = context.user_data.get("reg_country", "GB")
+        currency_code = context.user_data.get("reg_currency_code", "GBP")
+        currency_symbol = context.user_data.get("reg_currency_symbol", "£")
+        region = context.user_data.get("reg_region")
+        sector = context.user_data.get("reg_sector")
+        sub_industry = context.user_data.get("reg_subsector")
+        # Industry field on restaurant = sub-sector key (legacy compatibility)
+        industry = sub_industry or sector or "general"
+
+        update_restaurant_profile(
+            chat_id,
+            country_code=country_code,
+            sub_region=region,
+            language=lang,
+            sector=sector,
+            sub_industry=sub_industry,
+        )
+        # Also update currency and industry via their own functions
+        from database import set_restaurant_currency, set_restaurant_industry
+        set_restaurant_currency(chat_id, currency_code, currency_symbol)
+        set_restaurant_industry(chat_id, industry)
+
+        # Show what was auto-applied
+        comp = get_compliance({"country_code": country_code, "industry": industry})
+        compliance_list = build_compliance_summary(
+            {"country_code": country_code, "industry": industry}, lang
+        )
+        country_name = SUPPORTED_COUNTRIES.get(country_code, country_code)
+        await update.message.reply_text(
+            t("reg.name.registered", lang, name=name) + "\n\n"
+            + t("reg.compliance.applied", lang,
+                country=country_name, compliance_list=compliance_list),
+            parse_mode="Markdown",
+        )
+
+    # Step 7: location (optional)
     await update.message.reply_text(
-        f"*{name}* is now registered and TradeFlow is live!\n\n"
-        f"Team members can start sending voice notes, photos and texts right away.\n\n"
-        f"Tip: run /currency to set your local currency (default: GBP).\n\n"
-        f"─────────────────────\n"
-        f"*Optional: Complete your company profile*\n"
-        f"Adding details means they appear on every report.\n\n"
-        f"*Step 1 of 4 — Location*\n"
-        f"What is your address? Include street, city and postcode.\n\n"
-        f"{_SKIP_HINT}",
+        t("reg.location.prompt", lang) + f"\n\n_{t('reg.skip_hint', lang)}_",
         parse_mode="Markdown",
     )
     return REG_LOCATION
 
 
+# ── Step 7: location (text) ────────────────────────────────────────────────────
+
 async def _reg_got_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _rl(context)
     chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
     text = update.message.text.strip()
 
     if not _is_skip(text):
-        # Try to parse city and postcode from free text
-        # UK postcode pattern
         import re as _re
         postcode_match = _re.search(r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b', text, _re.I)
         postcode = postcode_match.group(0).upper() if postcode_match else None
-        address = text
-        update_restaurant_profile(chat_id, address=address, postcode=postcode)
+        update_restaurant_profile(chat_id, address=text, postcode=postcode)
 
+    # Step 8: contact
     await update.message.reply_text(
-        f"*Step 2 of 4 — Contact Details*\n"
-        f"Phone number and/or email address?\n"
-        f"_(e.g. 020 7123 4567 | hello@yourbistro.com)_\n\n"
-        f"{_SKIP_HINT}",
+        t("reg.contact.prompt", lang) + f"\n\n_{t('reg.skip_hint', lang)}_",
         parse_mode="Markdown",
     )
     return REG_CONTACT
 
 
+# ── Step 8: contact (text) ────────────────────────────────────────────────────
+
 async def _reg_got_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _rl(context)
     chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
     text = update.message.text.strip()
 
     if not _is_skip(text):
         import re as _re
         email_match = _re.search(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', text, _re.I)
-        phone_match = _re.search(r'[\d\s\+\(\)-]{7,}', text)
         email = email_match.group(0) if email_match else None
-        # Remove email from phone search area
         phone_text = text.replace(email, "") if email else text
-        phone_match2 = _re.search(r'[\d\s\+\(\)-]{7,}', phone_text)
-        phone = phone_match2.group(0).strip() if phone_match2 else None
+        phone_match = _re.search(r'[\d\s\+\(\)-]{7,}', phone_text)
+        phone = phone_match.group(0).strip() if phone_match else None
         update_restaurant_profile(chat_id, email=email, phone=phone)
 
+    # Step 9: legal
+    restaurant = get_restaurant_by_group(chat_id)
+    comp = get_compliance(restaurant) if restaurant else {}
+    vat_label = comp.get("vat_label", "VAT")
+    company_id_label = comp.get("company_id_label", "company number")
+    vat_example = "GB123456789" if vat_label == "VAT" else vat_label
     await update.message.reply_text(
-        f"*Step 3 of 4 — Legal & Tax*\n"
-        f"Company registration number and/or VAT number?\n"
-        f"_(e.g. 12345678 | GB123456789)_\n\n"
-        f"{_SKIP_HINT}",
+        t("reg.legal.prompt", lang,
+          vat_label=vat_label,
+          company_id_example="12345678",
+          vat_example=vat_example)
+        + f"\n\n_{t('reg.skip_hint', lang)}_",
         parse_mode="Markdown",
     )
     return REG_LEGAL
 
 
+# ── Step 9: legal / tax (text) ────────────────────────────────────────────────
+
 async def _reg_got_legal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _rl(context)
     chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
     text = update.message.text.strip()
 
     if not _is_skip(text):
         import re as _re
-        vat_match = _re.search(r'GB\s*\d{9}|\d{9}', text, _re.I)
-        # Company number is typically 8 digits (UK)
-        co_match = _re.search(r'\b\d{8}\b', text)
-        vat = vat_match.group(0).upper() if vat_match else None
-        company_number = co_match.group(0) if co_match else text if not vat else None
-        update_restaurant_profile(chat_id, vat_number=vat, company_number=company_number)
+        vat_match = _re.search(r'[A-Z]{2}\s*\d{7,12}', text, _re.I)
+        co_match = _re.search(r'\b\d{6,12}\b', text)
+        vat = vat_match.group(0).upper().replace(" ", "") if vat_match else None
+        company_number = co_match.group(0) if co_match else (text if not vat else None)
+
+        # If VAT number confirms a different country than selected, update it
+        vat_country = country_from_vat_number(vat) if vat else None
+        profile_fields = {"vat_number": vat, "company_number": company_number}
+        if vat_country and vat_country != context.user_data.get("reg_country"):
+            profile_fields["country_code"] = vat_country
+        update_restaurant_profile(chat_id, **profile_fields)
+
+    # Step 10: features
+    restaurant = get_restaurant_by_group(chat_id)
+    sub_industry = context.user_data.get("reg_subsector") or (restaurant.get("sub_industry") if restaurant else None) or "general"
+    sub_label_key = f"subsector.{sub_industry}"
+    from translations import t as _t
+    sub_label = _t(sub_label_key, lang, **{}) if sub_label_key in __import__("translations")._T else sub_industry.replace("_", " ").title()
+
+    name = restaurant["name"] if restaurant else "your business"
+    disabled: list = []   # all on by default
+    context.user_data["reg_disabled_features"] = disabled
 
     await update.message.reply_text(
-        f"*Step 4 of 4 — About the Business*\n"
-        f"Cuisine type, number of covers and number of locations?\n"
-        f"_(e.g. Italian, 60 covers, 3 locations)_\n\n"
-        f"{_SKIP_HINT}",
+        t("reg.features.prompt", lang, name=name, sub_industry=sub_label),
+        reply_markup=_features_keyboard(restaurant, sub_industry, disabled, lang),
         parse_mode="Markdown",
     )
-    return REG_BUSINESS
+    return REG_FEATURES
 
 
-async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
-    text = update.message.text.strip()
+# ── Step 10 callback: feature toggle ─────────────────────────────────────────
 
-    if not _is_skip(text):
-        import re as _re
-        covers_match = _re.search(r'(\d+)\s*covers?', text, _re.I)
-        branches_match = _re.search(r'(\d+)\s*(location|branch|site|outlet)s?', text, _re.I)
-        num_covers = int(covers_match.group(1)) if covers_match else None
-        num_branches = int(branches_match.group(1)) if branches_match else None
-        # Cuisine: first word(s) before any number
-        cuisine_match = _re.match(r'^([A-Za-z\s&/-]+?)(?:\s*,|\s*\d|$)', text)
-        cuisine = cuisine_match.group(1).strip() if cuisine_match else None
+async def _reg_cb_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import json as _json
+    query = update.callback_query
+    await query.answer()
+    lang = _rl(context)
+
+    action = query.data   # "rf:t:allergens" or "rf:ok"
+    disabled: list = context.user_data.get("reg_disabled_features", [])
+
+    if action == "rf:ok":
+        # Save and finish
+        chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
         update_restaurant_profile(
             chat_id,
-            cuisine_type=cuisine,
-            num_covers=num_covers,
-            num_branches=num_branches,
+            disabled_features=_json.dumps(disabled),
             profile_complete=1,
         )
+        restaurant = get_restaurant_by_group(chat_id)
+        await _reg_finish(query.message, restaurant, lang)
+        context.user_data.clear()
+        return ConversationHandler.END
 
-    restaurant = get_restaurant_by_group(chat_id)
-    name = restaurant["name"] if restaurant else "Your restaurant"
+    if action.startswith("rf:t:"):
+        feature_key = action[5:]
+        if feature_key in disabled:
+            disabled.remove(feature_key)
+        else:
+            disabled.append(feature_key)
+        context.user_data["reg_disabled_features"] = disabled
 
-    # Build a summary of what was saved
+        # Redraw the keyboard
+        chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
+        restaurant = get_restaurant_by_group(chat_id)
+        sub_industry = context.user_data.get("reg_subsector") or "general"
+        await query.edit_message_reply_markup(
+            reply_markup=_features_keyboard(restaurant, sub_industry, disabled, lang)
+        )
+        return REG_FEATURES
+
+    return REG_FEATURES
+
+
+async def _reg_finish(message, restaurant: dict, lang: str):
+    """Send the registration complete message."""
+    if not restaurant:
+        await message.reply_text("Registration complete.", parse_mode="Markdown")
+        return
+
+    comp = get_compliance(restaurant)
+    country_name = get_country_display(restaurant)
+    cs = restaurant.get("currency_symbol", "£")
+    currency_code = restaurant.get("currency_code", "GBP")
+    sub_ind = restaurant.get("sub_industry") or restaurant.get("industry") or "general"
+    from translations import t as _t
+    sub_label_key = f"subsector.{sub_ind}"
+    import translations as _tr
+    sub_label = _tr._T.get(sub_label_key, {}).get(lang, sub_ind.replace("_", " ").title())
+    compliance_summary = build_compliance_summary(restaurant, lang)
+
+    # Profile summary
     lines = []
-    if restaurant:
-        fields = {
-            "Address": restaurant["address"],
-            "Phone": restaurant["phone"],
-            "Email": restaurant["email"],
-            "Company No": restaurant["company_number"],
-            "VAT No": restaurant["vat_number"],
-            "Cuisine": restaurant["cuisine_type"],
-            "Covers": restaurant["num_covers"],
-            "Locations": restaurant["num_branches"],
-        }
-        for label, val in fields.items():
-            if val:
-                lines.append(f"  {label}: {val}")
+    for label_en, label_fr, val in [
+        ("Address", "Adresse", restaurant.get("address")),
+        ("Phone", "Téléphone", restaurant.get("phone")),
+        ("Email", "Email", restaurant.get("email")),
+        ("Company No", "N° société", restaurant.get("company_number")),
+        (comp.get("vat_label", "VAT"), comp.get("vat_label", "TVA"), restaurant.get("vat_number")),
+        ("Region", "Région", restaurant.get("sub_region")),
+    ]:
+        if val:
+            label = label_fr if lang == "fr" else label_en
+            lines.append(f"  {label}: {val}")
+    profile_summary = "\n".join(lines) if lines else ("  (aucun détail enregistré)" if lang == "fr" else "  (no details saved)")
 
-    profile_summary = "\n".join(lines) if lines else "  (no optional details saved)"
-
-    await update.message.reply_text(
-        f"*All set! {name} is fully registered.*\n\n"
-        f"*Profile saved:*\n{profile_summary}\n\n"
-        f"You can update any of these later with /profile\n\n"
-        f"*What to do next:*\n"
-        f"  • Send a voice note about today's shift\n"
-        f"  • Send a photo of an invoice\n"
-        f"  • Type /features to see everything TradeFlow can do",
+    await message.reply_text(
+        _t("reg.complete", lang,
+           name=restaurant["name"],
+           country=country_name,
+           currency=f"{cs} ({currency_code})",
+           sub_industry=sub_label,
+           compliance_summary=compliance_summary,
+           profile_summary=profile_summary),
         parse_mode="Markdown",
     )
-    context.user_data.clear()
-    return ConversationHandler.END
 
 
 async def _reg_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _rl(context)
     chat_id = context.user_data.get("reg_chat_id", str(update.effective_chat.id))
     restaurant = get_restaurant_by_group(chat_id)
     if restaurant:
-        await update.message.reply_text(
-            f"Profile setup cancelled. *{restaurant['name']}* is still registered and ready to use.\n"
-            f"Run /profile any time to add your company details.",
-            parse_mode="Markdown",
+        msg = (
+            f"Configuration annulée. *{restaurant['name']}* est toujours enregistré.\n"
+            f"Lancez /profile pour compléter votre profil."
+            if lang == "fr" else
+            f"Setup cancelled. *{restaurant['name']}* is still registered.\n"
+            f"Run /profile to complete your profile."
         )
+        await update.message.reply_text(msg, parse_mode="Markdown")
     else:
-        await update.message.reply_text("Registration cancelled.")
+        await update.message.reply_text(t("reg.cancel", lang))
     context.user_data.clear()
     return ConversationHandler.END
 
 
+# ── /profile — update existing profile (sends to location step) ───────────────
+
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/profile — update company details for an already-registered restaurant."""
+    """/profile — update address, contact, and legal details for a registered business."""
     chat_id = str(update.effective_chat.id)
     restaurant = get_restaurant_by_group(chat_id)
     if not restaurant:
         await update.message.reply_text(
-            "Not registered yet. Use /register to get started."
+            "Not registered yet. Use /register to get started.\n"
+            "Pas encore enregistré. Utilisez /register pour commencer."
         )
         return ConversationHandler.END
 
+    lang = get_lang(restaurant)
     context.user_data["reg_chat_id"] = chat_id
+    context.user_data["reg_lang"] = lang
+
+    msg = (
+        f"*Mise à jour du profil — {restaurant['name']}*\n\n"
+        if lang == "fr" else
+        f"*Updating profile — {restaurant['name']}*\n\n"
+    )
     await update.message.reply_text(
-        f"*Updating profile for {restaurant['name']}*\n\n"
-        f"*Step 1 of 4 — Location*\n"
-        f"What is your address? Include street, city and postcode.\n\n"
-        f"{_SKIP_HINT}",
+        msg + t("reg.location.prompt", lang) + f"\n\n_{t('reg.skip_hint', lang)}_",
         parse_mode="Markdown",
     )
     return REG_LOCATION
@@ -1870,8 +2231,8 @@ async def cmd_markpaid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /rename NewRestaurantName
-    Change the restaurant name without losing any data.
+    /rename NewBusinessName
+    Change the business name without losing any data.
     """
     restaurant = await _require_restaurant(update)
     if not restaurant:
@@ -2007,18 +2368,17 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  /import [date or range]: [what happened]\n\n"
             "Examples:\n\n"
             "Single day:\n"
-            "  /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n"
-            "  New lamb dish launched. Bidfood delivery short on salmon.\n\n"
+            "  /import 5 Jan 2025: Busy day, revenue around £1,800.\n"
+            "  New supplier started. Main van needed a repair.\n\n"
             "Fortnight:\n"
             "  /import 1 Jan to 14 Jan 2025: Quiet post-Christmas period.\n"
-            "  Revenue about £28,000, 900 covers. No major issues.\n\n"
+            "  Revenue about £22,000. No major issues.\n\n"
             "Month:\n"
-            "  /import March 2025: Revenue £72,000, 2,200 covers.\n"
-            "  Bidfood prices up 8%. Ahmed left, replaced by Sara.\n"
-            "  Kitchen deep clean week 2. Record Saturday on the 22nd.\n\n"
+            "  /import March 2025: Revenue £68,000. Main supplier prices\n"
+            "  up 8%. Ahmed left, replaced by Sara. Equipment fault week 2.\n\n"
             "Quarter:\n"
             "  /import Oct to Dec 2024: Best quarter ever. Revenue £210,000.\n"
-            "  Hired 3 staff. New menu launched November. Fridge replaced Dec.\n\n"
+            "  Hired 3 staff. New product range launched November.\n\n"
             "Repeat for each period you want to backfill."
         )
         return
@@ -2037,7 +2397,7 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not description:
         await update.message.reply_text(
             "Please include a description after the date.\n\n"
-            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Main supplier Bidfood."
+            "Example: /import March 2025: Revenue £68,000. Main supplier raised prices. Ahmed left."
         )
         return
 
@@ -2099,9 +2459,9 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entries:
         await update.message.reply_text(
             "Could not create entries from that description.\n\n"
-            "Try adding more detail — revenue, covers, supplier names, staff issues, equipment problems.\n"
-            "Example: /import March 2025: Revenue £72,000, 2,200 covers. Bidfood main supplier. "
-            "Fridge broke week 2, repaired same day. Ahmed left 15th. New dessert menu launched."
+            "Try adding more detail — revenue, supplier names, staff issues, equipment problems.\n"
+            "Example: /import March 2025: Revenue £68,000. Main supplier raised prices. "
+            "Van broke week 2, repaired same day. Ahmed left 15th. New product range launched."
         )
         return
 
@@ -2330,18 +2690,25 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = query if start_date == end_date else f"{_fmt_date(start_date)} to {_fmt_date(end_date)}"
 
+    comp = get_compliance(restaurant)
+    tips_law = comp["tips_law"]
+    tips_summary = comp["tips_summary"]
+    retention = comp["tips_retention_years"]
+    sym = _cs(restaurant)
+
     if not events:
+        example_cs = sym
         await update.message.reply_text(
             f"Tips Log — {restaurant['name']}\n"
             f"Period: {period_label}\n\n"
             f"No tip events recorded for this period.\n\n"
             f"Tips are logged automatically when your team mentions them in voice notes or messages.\n"
-            f"Example: \"Service tonight was great — card tips came to about £180\"\n\n"
-            f"Use /tipsreport to generate a compliance record."
+            f"Example: \"Great day — card tips came to about {example_cs}150\"\n\n"
+            + (f"Legal: {tips_law}\n{tips_summary}\n\n" if tips_law else "")
+            + "Use /tipsreport to generate a formal tips record."
         )
         return
 
-    sym = _cs(restaurant)
     lines = []
     for t in events:
         amount = t["gross_amount"] or 0
@@ -2350,6 +2717,16 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"  {_fmt_date(t['event_date'])}  {tip_type}  {sym}{amount:.2f}  ({shift})")
 
     events_text = "\n".join(lines)
+
+    # Footer: legal context if applicable, generic note if not
+    if tips_law:
+        footer = (
+            f"Law: {tips_law}\n"
+            f"{tips_summary}"
+            + (f"\nRecords must be kept for {retention} years." if retention else "")
+        )
+    else:
+        footer = tips_summary
 
     await update.message.reply_text(
         f"Tips Log — {restaurant['name']}\n"
@@ -2361,9 +2738,8 @@ async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{'─' * 40}\n"
         f"Total:        {sym}{summary['total']:>8,.2f}\n\n"
         f"Events ({len(events)}):\n{events_text}\n\n"
-        f"Legal requirement: 100% of tips must be passed to staff.\n"
-        f"Records must be kept for 3 years (Tips Act 2023).\n"
-        f"Use /tipsreport to generate a formal compliance record."
+        f"{footer}\n"
+        f"Use /tipsreport to generate a formal tips record."
     )
 
 
@@ -2398,19 +2774,26 @@ async def cmd_tipsreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     period_label = f"{_fmt_date(start_date)} to {_fmt_date(end_date)}" if start_date != end_date else _fmt_date(start_date)
 
+    comp = get_compliance(restaurant)
+    tips_law = comp["tips_law"]
     sym = _cs(restaurant)
+
+    law_label = tips_law or "Tips Record"
     await update.message.reply_text(
-        f"Generating Tips Act compliance record for {period_label}...\n"
+        f"Generating tips record for {period_label}...\n"
         f"({len(events)} events, {sym}{summary['total']:.2f} total)"
     )
 
     events_as_dicts = [dict(e) for e in events]
-    report = generate_tips_report(events_as_dicts, summary, restaurant["name"], period_label, sym)
+    report = generate_tips_report(
+        events_as_dicts, summary, restaurant["name"], period_label, sym,
+        compliance=comp,
+    )
 
     header = (
-        f"TIPS ACT COMPLIANCE RECORD\n"
-        f"Employment (Allocation of Tips) Act 2023\n"
-        f"{'=' * 38}\n\n"
+        f"TIPS RECORD — {restaurant['name'].upper()}\n"
+        + (f"{tips_law}\n" if tips_law else "")
+        + f"{'=' * 38}\n\n"
     )
     full_message = header + report
 
@@ -2437,6 +2820,16 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    if not _is_food_business(restaurant):
+        industry = (restaurant.get("industry") or "business").title()
+        await update.message.reply_text(
+            f"/inspection is for food businesses only (FSA Food Hygiene compliance).\n\n"
+            f"{restaurant['name']} is registered as a {industry}.\n\n"
+            f"Your compliance records are still captured automatically in your weekly report.\n"
+            f"Use /weeklyreport or /recall to review operational history."
+        )
+        return
+
     today_str = date.today().isoformat()
     cutoff_str = (date.today() - timedelta(days=90)).isoformat()
     entries = get_entries_with_staff(restaurant["id"], cutoff_str, today_str)
@@ -2450,9 +2843,11 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    comp = get_compliance(restaurant)
     await update.message.reply_text(
         f"Generating inspection readiness report from {len(entries)} entries (last 90 days)...\n"
-        "Analysing for: supplier traceability, equipment issues, allergen flags, staff records."
+        f"Analysing for: supplier traceability, equipment issues, allergen flags, staff records.\n"
+        f"Inspection authority: {comp['inspection_body']}"
     )
 
     entries_data = []
@@ -2471,8 +2866,11 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(item)
 
-    report = generate_inspection_report(entries_data, restaurant["name"],
-                                         restaurant.get("industry", "restaurant"))
+    report = generate_inspection_report(
+        entries_data, restaurant["name"],
+        restaurant.get("industry", "restaurant"),
+        compliance=comp,
+    )
 
     # Also append open allergen alerts
     open_alerts = [a for a in get_allergen_alerts(restaurant["id"], days_back=90) if not a["resolved"]]
@@ -2484,7 +2882,8 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report += f"\n\n---\nOpen Allergen Alerts ({len(open_alerts)}):\n{alert_lines}\nResolve with: /resolvallergen [id]"
 
     header = (
-        f"FSA INSPECTION READINESS — {restaurant['name'].upper()}\n"
+        f"INSPECTION READINESS — {restaurant['name'].upper()}\n"
+        f"{comp['inspection_body']}\n"
         f"Based on entries: {_fmt_date(cutoff_str)} to {_fmt_date(today_str)}\n"
         f"{'=' * 38}\n\n"
     )
@@ -2509,9 +2908,22 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    if not _is_food_business(restaurant):
+        industry = (restaurant.get("industry") or "business").title()
+        await update.message.reply_text(
+            f"/allergens is for food businesses only (Natasha's Law allergen traceability).\n\n"
+            f"{restaurant['name']} is registered as a {industry}.\n"
+            f"This command does not apply to your business type."
+        )
+        return
+
     alerts = get_allergen_alerts(restaurant["id"], days_back=90)
     open_alerts = [a for a in alerts if not a["resolved"]]
     resolved_alerts = [a for a in alerts if a["resolved"]]
+
+    comp = get_compliance(restaurant)
+    allergen_law = comp["allergen_law"]
+    allergen_summary = comp["allergen_summary"]
 
     if not alerts:
         await update.message.reply_text(
@@ -2521,8 +2933,7 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  - A supplier change or new supplier on an invoice\n"
             "  - An ingredient substitution mentioned in voice notes\n"
             "  - A new product that could affect your allergen declarations\n\n"
-            "Natasha's Law: you must keep allergen traceability records and\n"
-            "update allergen declarations when ingredients change."
+            f"{allergen_law}:\n{allergen_summary}"
         )
         return
 
@@ -2544,12 +2955,10 @@ async def cmd_allergens(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"Allergen Traceability Log — {restaurant['name']}\n"
-        f"Last 90 days\n"
+        f"Last 90 days  |  {allergen_law}\n"
         f"{'─' * 40}\n\n"
         + "\n".join(lines)
-        + "\n\n"
-        "Natasha's Law: update your allergen declarations whenever\n"
-        "a supplier, product, or ingredient changes.\n"
+        + f"\n\n{allergen_summary}\n"
         "Use /inspection for a full inspection readiness report."
     )
 
@@ -2562,6 +2971,10 @@ async def cmd_resolvallergen(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """
     restaurant = await _require_restaurant(update)
     if not restaurant:
+        return
+
+    if not _is_food_business(restaurant):
+        await update.message.reply_text("/resolvallergen is for food businesses only.")
         return
 
     if not context.args or not context.args[0].isdigit():
@@ -2594,14 +3007,44 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /features — plain-English guide to what the bot does, how to use it,
     what it captures, and what it cannot do. Split into 4 messages.
     """
+    chat_id = str(update.effective_chat.id)
+    restaurant = get_restaurant_by_group(chat_id)
+    is_food = _is_food_business(restaurant) if restaurant else True
+    cs = restaurant.get("currency_symbol", "£") if restaurant else "£"
+
+    # Industry-specific voice note example
+    if is_food:
+        voice_example1 = (
+            f"  \"Tonight revenue was around {cs}2,600. One complaint about wait time — resolved on the night.\"\n\n"
+            f"  \"Delivery short by 10kg. Invoice was {cs}290. Fridge in the back is making a noise.\"\n\n"
+        )
+        text_examples = (
+            f"  \"Main supplier raised prices by 9% this week\"\n"
+            f"  \"Ahmed was 40 mins late — third time this month\"\n"
+            f"  \"New dish selling really well, customers loving it\"\n"
+            f"  \"Saturday: {cs}3,250 takings\""
+        )
+        waste_line = "  Stock-outs and waste — reveals over/under ordering patterns.\n"
+    else:
+        voice_example1 = (
+            f"  \"Good day today — revenue around {cs}1,800. Two new customers, both said they'll be back.\"\n\n"
+            f"  \"Supplier delivery came in short. Invoice was {cs}340. One of the machines needs a service.\"\n\n"
+        )
+        text_examples = (
+            f"  \"Main supplier raised prices by 8% this week\"\n"
+            f"  \"Sara was late again — third time this month\"\n"
+            f"  \"New product line going really well, clients love it\"\n"
+            f"  \"Thursday: {cs}1,650 revenue\""
+        )
+        waste_line = "  Stock-outs and shortages — reveals supply and demand patterns.\n"
 
     # Message 1: What you can send
     await update.message.reply_text(
-        "RESTAURANT IQ — HOW IT WORKS\n"
+        "TRADEFLOW — HOW IT WORKS\n"
         "════════════════════════════════════\n\n"
         "Your team sends messages to this group as normal.\n"
         "TradeFlow reads every message, extracts the useful data,\n"
-        "and builds a picture of your restaurant's week.\n"
+        "and builds a picture of your week.\n"
         "No forms. No spreadsheets. Just talk.\n\n"
         "────────────────────────────────────\n"
         "WHAT YOU CAN SEND\n"
@@ -2610,45 +3053,37 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Hold the mic button in Telegram and speak.\n"
         "Any team member can do this — no training needed.\n\n"
         "Good examples:\n"
-        "  \"Tonight we did 82 covers. Revenue around £2,600. "
-        "Lamb sold out by 8pm. One complaint about wait time on table 4.\"\n\n"
-        "  \"Delivery from Metro Supplies. Short on salmon — only 6kg of the "
-        "14kg ordered. Invoice was £290.\"\n\n"
-        "  \"Fridge in prep kitchen is making a noise. Needs checking tomorrow.\"\n\n"
+        + voice_example1 +
+        "  \"Machine fault this morning — engineer booked for tomorrow.\"\n\n"
         "2. INVOICE OR RECEIPT PHOTOS\n"
         "Photograph any invoice or delivery note and send it here.\n"
         "The AI reads supplier, total, VAT and line items automatically.\n"
         "It starts tracking the payment due date straight away.\n\n"
-        "Works for: supplier invoices, delivery dockets, utility bills, repair invoices.\n"
+        "Works for: supplier invoices, delivery notes, utility bills, repair invoices.\n"
         "Best results: photo flat, good light, all four corners visible.\n\n"
         "3. TEXT MESSAGES\n"
         "Type anything — TradeFlow captures and categorises it.\n\n"
         "Examples:\n"
-        "  \"Butcher raised beef prices by 9% this week\"\n"
-        "  \"Ahmed was 40 mins late — third time this month\"\n"
-        "  \"Truffle arancini selling really well, customers loving it\"\n"
-        "  \"Saturday: 96 covers, £3,250 takings\""
+        + text_examples
     )
 
     # Message 2: What gets extracted + limitations
     await update.message.reply_text(
-        "WHAT RESTAURANT IQ EXTRACTS AUTOMATICALLY\n"
+        "WHAT TRADEFLOW EXTRACTS AUTOMATICALLY\n"
         "══════════════════════════════════════\n\n"
         "You don't need a special format. The AI understands plain speech.\n\n"
         "REVENUE\n"
-        "  Covers and takings from any message.\n"
-        "  \"Did 90 covers, took about £3,100\" → logged as revenue.\n\n"
+        f"  Income and takings from any message — logged automatically.\n"
+        f"  \"Took about {cs}2,100 today\" → logged as revenue.\n\n"
         "COSTS\n"
         "  Invoice totals from photos — recorded to the penny.\n"
         "  Price increases mentioned in voice or text — flagged for review.\n\n"
-        "WASTE\n"
-        "  Items that sold out (86'd) — reveals over/under ordering patterns.\n"
-        "  Food waste mentioned explicitly — logged by date.\n\n"
+        "STOCK & SUPPLY\n"
+        + waste_line +
+        "  Supplier issues: short deliveries, price changes, quality problems.\n\n"
         "STAFF\n"
         "  Lateness, absences, performance concerns — logged with date.\n"
         "  Positive mentions captured too — a record of who is doing well.\n\n"
-        "SUPPLIER ISSUES\n"
-        "  Short deliveries, quality problems, price changes — all flagged.\n\n"
         "EQUIPMENT & OPERATIONS\n"
         "  Kit faults, complaints, compliments — stored and summarised weekly.\n\n"
         "URGENCY FLAG on every entry:\n"
@@ -2662,8 +3097,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  ✗ Staff hours or wages — no labour cost tracking\n"
         "  ✗ Till or EPOS data — no integration with payment systems\n"
         "  ✗ Blurry or dark invoice photos — AI cannot read unclear images\n"
-        "  ✗ Non-English voice notes — transcription works best in English\n"
-        "  ✗ Multiple currencies — assumes £ throughout"
+        "  ✗ Non-English voice notes — transcription works best in English"
     )
 
     # Message 3: Commands
@@ -2672,7 +3106,7 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "═════════════════════\n\n"
         "/weeklyreport\n"
         "  Full AI briefing for the current week.\n"
-        "  Covers: revenue, cost alerts, waste patterns, staff issues,\n"
+        "  Includes: revenue, cost alerts, stock issues, staff incidents,\n"
         "  supplier flags, and a numbered action list by financial impact.\n"
         "  Also sends a branded PDF you can save, print or share.\n\n"
         "/financials [period]\n"
@@ -2699,31 +3133,51 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  Run /demoreset to clear it when done."
     )
 
-    # Message 3b: UK compliance commands
+    # Message 3b: UK compliance commands (food-specific sections only shown for food businesses)
+    food_compliance = ""
+    if is_food:
+        food_compliance = (
+            "\n/allergens\n"
+            "  Allergen traceability log for the last 90 days.\n"
+            "  Alerts are raised automatically when the AI detects a supplier\n"
+            "  change, ingredient substitution, or new product on an invoice.\n"
+            "  Natasha's Law: you must update allergen declarations when\n"
+            "  ingredients or suppliers change. Unlimited fines for failures.\n\n"
+            "/resolvallergen [id]\n"
+            "  Mark an allergen alert as reviewed and resolved.\n"
+            "  Resolved alerts remain in your traceability record.\n\n"
+            "/inspection\n"
+            "  FSA Food Hygiene inspection readiness report.\n"
+            "  Analyses your last 90 days of entries and produces a structured\n"
+            "  report covering: supplier traceability, equipment logs, temperature\n"
+            "  incidents, allergen flags, staff records, and compliance gaps.\n"
+            "  EHOs look for exactly this documentation — a 5-star rating\n"
+            "  requires evidence of consistent record-keeping.\n"
+            "  Run before every inspection or quarterly as a health check.\n"
+        )
+
     await update.message.reply_text(
         "UK LEGAL COMPLIANCE COMMANDS\n"
         "══════════════════════════════\n\n"
-        "These features are unique to TradeFlow and built specifically\n"
-        "for UK legal requirements that every restaurant must meet.\n\n"
+        "These features are built specifically for UK legal requirements.\n\n"
         "/import [date range]: [description]\n"
         "  Import any historical period in plain English.\n"
         "  Works for a single day, a fortnight, a month, a quarter, or more.\n"
         "  The AI creates proportional dated entries from your description.\n\n"
         "  A single day:\n"
-        "    /import 5 Jan 2025: Busy Saturday, 94 covers, £3,100.\n\n"
+        f"    /import 5 Jan 2025: Good day, {cs}1,800 revenue. Short delivery from main supplier.\n\n"
         "  A fortnight:\n"
-        "    /import 1 Jan to 14 Jan 2025: Quiet period, £28,000 revenue,\n"
-        "    900 covers. Bidfood main supplier. No major incidents.\n\n"
+        "    /import 1 Jan to 14 Jan 2025: Quiet period, revenue around\n"
+        f"    {cs}22,000. New supplier started. No major incidents.\n\n"
         "  A month:\n"
-        "    /import March 2025: Revenue £72,000, 2,200 covers.\n"
-        "    Bidfood prices up 8%. Ahmed left, Sara started 20th.\n"
-        "    Record Saturday on the 22nd — 98 covers.\n\n"
+        f"    /import March 2025: Revenue {cs}68,000. Main supplier raised\n"
+        "    prices 8%. Sara left, replaced by James. Equipment fault week 2.\n\n"
         "  A quarter:\n"
-        "    /import Oct to Dec 2024: Revenue £210,000. Hired 3 staff.\n"
-        "    New menu in November. Fridge replaced in December.\n\n"
+        f"    /import Oct to Dec 2024: Revenue {cs}210,000. Hired 3 staff.\n"
+        "    New product range launched November. Best month ever in December.\n\n"
         "  Run /import again for each period. Use /recall to check results.\n\n"
         "/rename [name]\n"
-        "  Change the restaurant name without losing any data.\n\n"
+        "  Change the business name without losing any data.\n\n"
         "/cleardata CONFIRM\n"
         "  Delete all entries and start fresh. Registration is kept.\n\n"
         "/tips [period]\n"
@@ -2735,34 +3189,40 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/tipsreport [period]\n"
         "  Generate a formal Tips Act compliance record.\n"
         "  Any staff member can request this record. Have it ready.\n"
-        "  Try: /tipsreport   /tipsreport last month\n\n"
-        "/allergens\n"
-        "  Allergen traceability log for the last 90 days.\n"
-        "  Alerts are raised automatically when the AI detects a supplier\n"
-        "  change, ingredient substitution, or new product on an invoice.\n"
-        "  Natasha's Law: you must update allergen declarations when\n"
-        "  ingredients or suppliers change. Unlimited fines for failures.\n\n"
-        "/resolvallergen [id]\n"
-        "  Mark an allergen alert as reviewed and resolved.\n"
-        "  Resolved alerts remain in your traceability record.\n\n"
-        "/inspection\n"
-        "  FSA Food Hygiene inspection readiness report.\n"
-        "  Analyses your last 90 days of entries and produces a structured\n"
-        "  report covering: supplier traceability, equipment logs, temperature\n"
-        "  incidents, allergen flags, staff records, and compliance gaps.\n"
-        "  EHOs look for exactly this documentation — a 5-star rating\n"
-        "  requires evidence of consistent record-keeping.\n"
-        "  Run before every inspection or quarterly as a health check."
+        "  Try: /tipsreport   /tipsreport last month"
+        + food_compliance
     )
 
     # Message 4: How to get the most out of it
+    if is_food:
+        best_habit = (
+            "THE MOST VALUABLE HABIT:\n"
+            "End-of-shift voice note from whoever closes up.\n"
+            "Even 30 seconds on revenue, any issues, and how service felt\n"
+            "gives the AI enough to produce sharp weekly insights.\n\n"
+        )
+        good_entry = (
+            "  ✅ \"Good Friday — revenue around £1,800. One complaint, handled well. Stock running low on X.\"\n\n"
+            "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
+            "  ✅ \"Equipment alarm at 6am — engineer confirmed false alarm.\"\n\n"
+        )
+    else:
+        best_habit = (
+            "THE MOST VALUABLE HABIT:\n"
+            "End-of-day voice note from whoever closes up.\n"
+            "Even 30 seconds on revenue, any issues, and the feel of the day\n"
+            "gives the AI enough to produce sharp weekly insights.\n\n"
+        )
+        good_entry = (
+            f"  ✅ \"Good day — revenue around {cs}1,800. Two new clients. Running low on X.\"\n\n"
+            "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
+            "  ✅ \"Van broke down this morning — repaired same day, back on road by 11.\"\n\n"
+        )
+
     await update.message.reply_text(
         "HOW TO GET THE MOST OUT OF IT\n"
         "══════════════════════════════\n\n"
-        "THE MOST VALUABLE HABIT:\n"
-        "End-of-shift voice note from whoever closes the restaurant.\n"
-        "Even 30 seconds covering covers, any issues, and the feel of service\n"
-        "gives the AI enough to produce sharp weekly insights.\n\n"
+        + best_habit +
         "INVOICES:\n"
         "Photograph every invoice the day it arrives — not in batches.\n"
         "TradeFlow tracks due dates from the invoice date, so late uploads\n"
@@ -2770,12 +3230,9 @@ async def cmd_features(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "YOUR TEAM:\n"
         "Add all staff to this Telegram group.\n"
         "TradeFlow records who sent each update, so the weekly report\n"
-        "can link issues and wins to the right shifts and people.\n\n"
+        "can link issues and wins to the right people.\n\n"
         "WHAT GOOD ENTRIES LOOK LIKE:\n"
-        "  ✅ \"Friday lunch: 44 covers, £1,180. Veg soup sold out at 1pm.\n"
-        "       Two tables complimented the new sea bass.\"\n\n"
-        "  ✅ [Photo of invoice — flat on desk, clear light, full page visible]\n\n"
-        "  ✅ \"Walk-in fridge alarm at 6am — engineer confirmed false alarm.\"\n\n"
+        + good_entry +
         "WHAT GETS IGNORED:\n"
         "  ✗ Short replies like \"ok\" or \"thanks\" — no useful data\n"
         "  ✗ Forwarded articles or links\n"
@@ -3004,11 +3461,19 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     trends = get_eightysix_trends(restaurant["id"], start_date, end_date)
 
+    is_food = _is_food_business(restaurant)
+    item_label = "86'd Items" if is_food else "Stock-Outs"
+
     if not trends:
-        await update.message.reply_text(
-            f"No 86'd items recorded for {period_label}.\n\n"
-            "Items are logged automatically when your team mentions running out of something.\n"
+        example = (
             "Example voice note: \"We 86'd the salmon at 7pm, ran out of the lamb too.\""
+            if is_food else
+            "Example: \"Ran out of the blue ink cartridges\" or \"Last set of large overalls sold today.\""
+        )
+        await update.message.reply_text(
+            f"No {item_label.lower()} recorded for {period_label}.\n\n"
+            "Items are logged automatically when your team mentions running out of something.\n"
+            + example
         )
         return
 
@@ -3017,16 +3482,25 @@ async def cmd_eightysix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bar = "█" * min(count, 10)
         lines.append(f"  {bar} {count}×  {item.title()}")
 
+    use_for = (
+        "Use this for:\n"
+        "  - Ordering: increase PAR levels for frequently 86'd items\n"
+        "  - Menu: consider removing items that always run out early\n"
+        "  - Pricing: popular items that 86 early may support a price increase"
+        if is_food else
+        "Use this for:\n"
+        "  - Ordering: increase stock levels for frequently run-out items\n"
+        "  - Forecasting: spot demand patterns to avoid future stockouts\n"
+        "  - Pricing: high-demand items may support a price review"
+    )
+
     await update.message.reply_text(
-        f"86'd Items — {restaurant['name']}\n"
+        f"{item_label} — {restaurant['name']}\n"
         f"Period: {period_label}\n"
         f"{'─' * 36}\n\n"
         + "\n".join(lines)
         + f"\n\nTotal unique items: {len(trends)}\n\n"
-        "Use this for:\n"
-        "  - Ordering: increase PAR for frequently 86'd items\n"
-        "  - Menu: consider removing or reducing portion sizes on items that always run out\n"
-        "  - Pricing: popular items that 86 early may support a price increase"
+        + use_for
     )
 
 
@@ -3250,7 +3724,8 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         writer = csv.writer(output)
-        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", "Revenue (£)", "Covers"])
+        cs_header = f"Revenue ({restaurant.get('currency_symbol', '£')})"
+        writer.writerow(["Date", "Time", "Type", "Staff", "Category", "Summary", "Raw Text", "Urgency", cs_header, "Qty/Footfall"])
 
         for e in entries:
             summary = urgency = revenue = covers = ""
@@ -3303,6 +3778,18 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not restaurant:
         return
 
+    comp = get_compliance(restaurant)
+    data_law = comp["data_law"]
+    data_summary = comp["data_summary"]
+    tips_law = comp.get("tips_law")
+    retention = comp.get("tips_retention_years", 0)
+
+    tips_note = (
+        f"Tips records ({tips_law}, {retention}-year retention) are NOT affected."
+        if tips_law and retention
+        else "Tips records are kept for your records and are NOT affected."
+    )
+
     if not context.args:
         await update.message.reply_text(
             "Delete entries older than a specified number of days.\n\n"
@@ -3310,8 +3797,9 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Examples:\n"
             "  /deletedata 90   — delete entries older than 90 days\n"
             "  /deletedata 365  — delete entries older than 1 year\n\n"
-            "GDPR note: this deletes daily_entries and linked compliance records.\n"
-            "Tips Act records (3-year legal retention) are NOT affected.\n"
+            f"Data law: {data_law}\n"
+            f"{data_summary}\n\n"
+            f"{tips_note}\n"
             "Use /cleardata CONFIRM to delete everything."
         )
         return
@@ -3340,11 +3828,11 @@ async def cmd_deletedata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        f"GDPR data deletion complete.\n\n"
+        f"Data deletion complete ({data_law}).\n\n"
         f"Deleted: {deleted} entries older than {days} days\n"
-        f"Restaurant: {restaurant['name']}\n\n"
+        f"Business: {restaurant['name']}\n\n"
         f"Remaining entries and compliance records are intact.\n"
-        f"Tips Act records are unaffected (3-year legal retention applies)."
+        f"{tips_note}"
     )
 
 
@@ -3835,6 +4323,224 @@ async def cmd_setindustry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_setcountry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setcountry [code] — view or set the country for this business.
+
+    The country determines which compliance features, laws, and inspection
+    bodies are relevant. It is auto-detected from your VAT number at
+    registration, but can be changed here at any time.
+
+    Examples:
+      /setcountry        — show current country and what it affects
+      /setcountry GB     — United Kingdom (FSA, Natasha's Law, Tips Act)
+      /setcountry US     — United States (FDA, FALCPA)
+      /setcountry AU     — Australia (FSANZ, Privacy Act)
+      /setcountry NG     — Nigeria (NAFDAC)
+      /setcountry KE     — Kenya
+      /setcountry ZA     — South Africa (POPIA)
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        comp = get_compliance(restaurant)
+        country_code = infer_country(restaurant)
+        country_name = get_country_display(restaurant)
+
+        supported = "\n".join(
+            f"  {code} — {name}"
+            for code, name in SUPPORTED_COUNTRIES.items()
+        )
+
+        tips_status = (
+            f"  Tips Act: {comp['tips_law']} ✓"
+            if comp.get("tips_enabled")
+            else f"  Tips tracking: available (no mandatory law in {country_name})"
+        )
+        allergen_status = f"  Allergen law: {comp['allergen_law']}"
+        inspection_status = f"  Inspection body: {comp['inspection_body']}"
+        data_status = f"  Data law: {comp['data_law']}"
+
+        await update.message.reply_text(
+            f"Country — {restaurant['name']}\n"
+            f"{'─' * 36}\n"
+            f"Current: {country_name} ({country_code})\n\n"
+            f"Active compliance framework:\n"
+            f"{tips_status}\n"
+            f"{allergen_status}\n"
+            f"{inspection_status}\n"
+            f"{data_status}\n\n"
+            f"To change: /setcountry CODE\n\n"
+            f"Supported countries:\n{supported}"
+        )
+        return
+
+    code = context.args[0].upper().strip()
+    if code not in SUPPORTED_COUNTRIES:
+        supported_list = ", ".join(SUPPORTED_COUNTRIES.keys())
+        await update.message.reply_text(
+            f"Country code '{code}' not recognised.\n\n"
+            f"Supported: {supported_list}\n\n"
+            "Example: /setcountry GB"
+        )
+        return
+
+    update_restaurant_profile(chat_id, country_code=code)
+    comp_new = SUPPORTED_COUNTRIES[code]
+    # Show what changed
+    from compliance import COUNTRY_COMPLIANCE, _DEFAULT_COMPLIANCE
+    new_comp = COUNTRY_COMPLIANCE.get(code, _DEFAULT_COMPLIANCE)
+    tips_note = (
+        f"Tips Act: {new_comp['tips_law']} (3-year record retention)"
+        if new_comp.get("tips_enabled")
+        else f"Tips: no mandatory law in {comp_new}"
+    )
+
+    await update.message.reply_text(
+        f"Country updated to *{comp_new}* ({code})\n\n"
+        f"Active compliance framework:\n"
+        f"  {tips_note}\n"
+        f"  Allergen law: {new_comp['allergen_law']}\n"
+        f"  Inspection: {new_comp['inspection_body']}\n"
+        f"  Data: {new_comp['data_law']}\n\n"
+        f"All compliance commands now use {comp_new} regulations.",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_setlanguage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setlanguage [en|fr] — view or change the language for this business."""
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+    current_lang = get_lang(restaurant)
+
+    if not context.args:
+        buttons = [
+            [
+                InlineKeyboardButton("🇬🇧 English", callback_data=f"sl:en:{chat_id}"),
+                InlineKeyboardButton("🇫🇷 Français", callback_data=f"sl:fr:{chat_id}"),
+            ]
+        ]
+        current_label = "English" if current_lang == "en" else "Français"
+        msg = (
+            f"Langue — *{restaurant['name']}*\nActuelle : {current_label}"
+            if current_lang == "fr" else
+            f"Language — *{restaurant['name']}*\nCurrent: {current_label}"
+        )
+        await update.message.reply_text(
+            msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown"
+        )
+        return
+
+    new_lang = context.args[0].lower()[:2]
+    if new_lang not in ("en", "fr"):
+        await update.message.reply_text("Supported: en (English), fr (Français)")
+        return
+
+    update_restaurant_profile(chat_id, language=new_lang)
+    await update.message.reply_text(
+        t("cmd.setlanguage.updated", new_lang), parse_mode="Markdown"
+    )
+
+
+async def _setlanguage_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback for inline language selection from /setlanguage."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")   # "sl:en:chat_id"
+    if len(parts) < 3:
+        return
+    new_lang = parts[1]
+    chat_id = parts[2]
+    update_restaurant_profile(chat_id, language=new_lang)
+    await query.edit_message_text(
+        t("cmd.setlanguage.updated", new_lang), parse_mode="Markdown"
+    )
+
+
+async def cmd_setfeatures(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setfeatures — view and toggle features on/off for this business."""
+    import json as _json
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    lang = get_lang(restaurant)
+    sub_industry = restaurant.get("sub_industry") or restaurant.get("industry") or "general"
+    raw = restaurant.get("disabled_features") or "[]"
+    try:
+        disabled = _json.loads(raw)
+    except (ValueError, TypeError):
+        disabled = []
+
+    await update.message.reply_text(
+        t("cmd.setfeatures.prompt", lang, name=restaurant["name"]),
+        reply_markup=_setfeatures_keyboard(restaurant, sub_industry, disabled, lang),
+        parse_mode="Markdown",
+    )
+
+
+def _setfeatures_keyboard(restaurant: dict, industry_key: str,
+                           disabled: list, lang: str) -> InlineKeyboardMarkup:
+    """Feature keyboard for /setfeatures (uses sf: prefix to distinguish from reg flow)."""
+    is_food = is_food_business(restaurant)
+    buttons = []
+    for key, meta in FEATURE_CATALOGUE.items():
+        if meta["food_only"] and not is_food:
+            continue
+        status = "✅" if key not in disabled else "❌"
+        label = t(meta["label_key"], lang)
+        buttons.append([InlineKeyboardButton(
+            f"{status} {label}", callback_data=f"sf:t:{key[:50]}"
+        )])
+    buttons.append([InlineKeyboardButton(t("reg.features.save_btn", lang), callback_data="sf:ok")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def _setfeatures_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles feature toggle callbacks from /setfeatures."""
+    import json as _json
+    query = update.callback_query
+    await query.answer()
+
+    chat_id = str(query.message.chat_id)
+    restaurant = get_restaurant_by_group(chat_id)
+    if not restaurant:
+        return
+
+    lang = get_lang(restaurant)
+    action = query.data
+    raw = restaurant.get("disabled_features") or "[]"
+    try:
+        disabled = _json.loads(raw)
+    except (ValueError, TypeError):
+        disabled = []
+
+    if action == "sf:ok":
+        update_restaurant_profile(chat_id, disabled_features=_json.dumps(disabled))
+        await query.edit_message_text(t("cmd.setfeatures.saved", lang))
+        return
+
+    if action.startswith("sf:t:"):
+        feature_key = action[5:]
+        if feature_key in disabled:
+            disabled.remove(feature_key)
+        else:
+            disabled.append(feature_key)
+        # Save immediately on each toggle
+        update_restaurant_profile(chat_id, disabled_features=_json.dumps(disabled))
+        sub_industry = restaurant.get("sub_industry") or restaurant.get("industry") or "general"
+        await query.edit_message_reply_markup(
+            reply_markup=_setfeatures_keyboard(restaurant, sub_industry, disabled, lang)
+        )
+
+
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
@@ -4024,11 +4730,22 @@ def main():
             CommandHandler("profile", cmd_profile),
         ],
         states={
-            REG_NAME:     [MessageHandler(_text_filter, _reg_got_name)],
-            REG_LOCATION: [MessageHandler(_text_filter, _reg_got_location)],
-            REG_CONTACT:  [MessageHandler(_text_filter, _reg_got_contact)],
-            REG_LEGAL:    [MessageHandler(_text_filter, _reg_got_legal)],
-            REG_BUSINESS: [MessageHandler(_text_filter, _reg_got_business)],
+            # Inline-keyboard steps
+            REG_COUNTRY:   [CallbackQueryHandler(_reg_cb_country,  pattern=r"^rc:")],
+            REG_SUBREGION: [
+                CallbackQueryHandler(_reg_cb_region,  pattern=r"^rr:"),
+                MessageHandler(_text_filter, _reg_text_region),
+            ],
+            REG_LANGUAGE:  [CallbackQueryHandler(_reg_cb_language, pattern=r"^rl:")],
+            REG_SECTOR:    [CallbackQueryHandler(_reg_cb_sector,   pattern=r"^rs:")],
+            REG_SUBSECTOR: [CallbackQueryHandler(_reg_cb_subsector, pattern=r"^rss:")],
+            # Text-input steps
+            REG_NAME:      [MessageHandler(_text_filter, _reg_got_name)],
+            REG_LOCATION:  [MessageHandler(_text_filter, _reg_got_location)],
+            REG_CONTACT:   [MessageHandler(_text_filter, _reg_got_contact)],
+            REG_LEGAL:     [MessageHandler(_text_filter, _reg_got_legal)],
+            # Feature toggle (inline keyboard)
+            REG_FEATURES:  [CallbackQueryHandler(_reg_cb_features, pattern=r"^rf:")],
         },
         fallbacks=[CommandHandler("cancel", _reg_cancel)],
         per_chat=True,
@@ -4051,6 +4768,12 @@ def main():
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
     app.add_handler(CommandHandler("currency", cmd_currency))
     app.add_handler(CommandHandler("setindustry", cmd_setindustry))
+    app.add_handler(CommandHandler("setcountry", cmd_setcountry))
+    app.add_handler(CommandHandler("setlanguage", cmd_setlanguage))
+    app.add_handler(CommandHandler("setfeatures", cmd_setfeatures))
+    # Inline callbacks for /setlanguage and /setfeatures (outside registration wizard)
+    app.add_handler(CallbackQueryHandler(_setlanguage_cb, pattern=r"^sl:"))
+    app.add_handler(CallbackQueryHandler(_setfeatures_cb, pattern=r"^sf:"))
     app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
@@ -4072,7 +4795,7 @@ def main():
     app.add_handler(CommandHandler("supportstatus", cmd_supportstatus))
     app.add_handler(CommandHandler("reply", cmd_reply))
 
-    # UK compliance commands
+    # Compliance commands (laws/bodies adapt to the business's country)
     app.add_handler(CommandHandler("tips", cmd_tips))
     app.add_handler(CommandHandler("tipsreport", cmd_tipsreport))
     app.add_handler(CommandHandler("inspection", cmd_inspection))
