@@ -33,6 +33,7 @@ Message types:
 
 import os
 import re
+import asyncio
 import json
 import logging
 import subprocess
@@ -41,6 +42,7 @@ import json as _json_mod
 from datetime import timezone as _tz
 from datetime import datetime, timedelta, date
 
+import telegram.error
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -4717,6 +4719,15 @@ async def cmd_demoreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler — prevents crashes on Railway deployment overlap (409 Conflict)."""
+    if isinstance(context.error, telegram.error.Conflict):
+        logger.warning("409 Conflict: another bot instance still polling. Waiting for it to stop...")
+        await asyncio.sleep(3)
+        return
+    logger.error("Unhandled exception in update handler", exc_info=context.error)
+
+
 def main():
     init_db()
 
@@ -4750,9 +4761,11 @@ def main():
         fallbacks=[CommandHandler("cancel", _reg_cancel)],
         per_chat=True,
         per_user=True,
+        per_message=False,
         allow_reentry=True,
     )
     app.add_handler(reg_conv)
+    app.add_error_handler(_error_handler)
 
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
