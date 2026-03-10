@@ -64,8 +64,11 @@ _TIERS = [
 # Shared prompt templates (same JSON output regardless of provider)
 # ============================================================
 
-def _text_prompt(text: str, restaurant_name: str) -> str:
-    return f"""You are a restaurant data analyst for "{restaurant_name}".
+def _text_prompt(text: str, restaurant_name: str,
+                 business_type: str = "restaurant",
+                 currency_symbol: str = "£") -> str:
+    cs = currency_symbol
+    return f"""You are a {business_type} data analyst for "{restaurant_name}".
 A staff member has sent this update. Extract key information.
 
 MESSAGE: "{text}"
@@ -92,15 +95,18 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 }}
 
 Tips detection: set tips_detected=true if the message mentions tips, gratuities, service charge, or tronc.
-  Extract tip_amount (number, £) and tip_type ("card", "cash", or "both") if mentioned.
+  Extract tip_amount (number, {cs}) and tip_type ("card", "cash", or "both") if mentioned.
 Allergen risk: set allergen_risk=true if a supplier change, ingredient substitution, or new product is mentioned
-  that could affect food allergen declarations. Describe the concern in allergen_detail.
+  that could affect product/food allergen declarations. Describe the concern in allergen_detail.
 Labour cost: set category="labour" if the message mentions wages, payroll, staff costs, agency fees, or labour costs.
-  Extract the £ amount into the revenue field (we reuse it for labour amounts on the labour category)."""
+  Extract the {cs} amount into the revenue field (we reuse it for labour amounts on the labour category)."""
 
 
-def _image_prompt(restaurant_name: str) -> str:
-    return f"""You are an invoice analyst for "{restaurant_name}".
+def _image_prompt(restaurant_name: str,
+                  business_type: str = "restaurant",
+                  currency_symbol: str = "£") -> str:
+    cs = currency_symbol
+    return f"""You are an invoice analyst for "{restaurant_name}" ({business_type}).
 Read this invoice or receipt image carefully and extract all data.
 
 Return ONLY valid JSON — no markdown, no explanation:
@@ -178,7 +184,7 @@ Write a WEEKLY INTELLIGENCE BRIEFING with these sections:
 
 ## TOP ACTIONS FOR NEXT WEEK
 Numbered list of 3-5 specific, actionable priorities ranked by financial impact.
-Include an estimated £ impact where data supports it.
+Include an estimated {cs} impact where data supports it.
 
 ## POSITIVE HIGHLIGHTS
 What went well this week — customer feedback, staff performance, menu wins.
@@ -186,7 +192,7 @@ What went well this week — customer feedback, staff performance, menu wins.
 ---
 Guidelines:
 - Language: clear, direct, professional — these are busy owners
-- Use £ for all currency
+- Use {cs} for all currency
 - Where data is thin, say so and suggest what to capture next week
 - Be specific with numbers when data supports it
 - Keep each section concise — no filler sentences"""
@@ -451,9 +457,10 @@ _REPORT_FN = {"gemini": _gemini_report, "groq": _groq_report, "claude": _claude_
 # PUBLIC INTERFACE — called by analyzer.py
 # ============================================================
 
-def analyze_text(text: str, restaurant_name: str) -> dict:
+def analyze_text(text: str, restaurant_name: str,
+                 currency_symbol: str = "£", business_type: str = "restaurant") -> dict:
     tier = _select_tier()
-    prompt = _text_prompt(text, restaurant_name)
+    prompt = _text_prompt(text, restaurant_name, business_type, currency_symbol)
     provider = tier["provider"]
     try:
         if provider == "groq":
@@ -477,9 +484,10 @@ def analyze_text(text: str, restaurant_name: str) -> dict:
         }
 
 
-def analyze_image(image_path: str, restaurant_name: str) -> dict:
+def analyze_image(image_path: str, restaurant_name: str,
+                  currency_symbol: str = "£", business_type: str = "restaurant") -> dict:
     tier = _select_tier()
-    prompt = _image_prompt(restaurant_name)
+    prompt = _image_prompt(restaurant_name, business_type, currency_symbol)
     provider = tier["provider"]
     try:
         if provider in ("groq", "claude"):
@@ -557,7 +565,8 @@ def generate_report(entries_data: list, restaurant_name: str,
         )
 
 
-def analyze_correction(original_text: str, correction: str, restaurant_name: str) -> dict:
+def analyze_correction(original_text: str, correction: str, restaurant_name: str,
+                       currency_symbol: str = "£", business_type: str = "restaurant") -> dict:
     """
     Re-analyse an entry applying a specific correction.
     Uses a dedicated prompt so the AI applies the fix rather than
@@ -566,7 +575,7 @@ def analyze_correction(original_text: str, correction: str, restaurant_name: str
     tier = _select_tier()
     provider = tier["provider"]
 
-    prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
+    prompt = f"""You are a {business_type} data analyst for "{restaurant_name}".
 
 A staff member logged this entry:
 ORIGINAL: "{original_text}"
@@ -621,7 +630,8 @@ Return ONLY valid JSON — no markdown, no explanation:
 
 
 def analyze_history_import(description: str, start_date: str, end_date: str,
-                           restaurant_name: str) -> list:
+                           restaurant_name: str,
+                           currency_symbol: str = "£", business_type: str = "restaurant") -> list:
     """
     Parse a plain-language description of any historical period and return
     a list of daily entry dicts ready to be saved to the database.
@@ -655,12 +665,13 @@ def analyze_history_import(description: str, start_date: str, end_date: str,
     else:
         min_e, max_e = 15, 30
 
+    cs = currency_symbol
     tier = _select_tier()
     provider = tier["provider"]
 
-    prompt = f"""You are a restaurant data analyst for "{restaurant_name}".
+    prompt = f"""You are a {business_type} data analyst for "{restaurant_name}".
 
-A restaurant owner is importing historical data covering {num_days} day(s): {start_date} to {end_date}.
+A {business_type} owner is importing historical data covering {num_days} day(s): {start_date} to {end_date}.
 They have described this period as follows:
 
 "{description}"
@@ -716,15 +727,17 @@ Rules:
         return []
 
 
-def answer_help_question(question: str, restaurant_name: str) -> str:
+def answer_help_question(question: str, restaurant_name: str,
+                         currency_symbol: str = "£", business_type: str = "restaurant") -> str:
     """
-    Answer a restaurant owner's question about how to use the bot.
+    Answer a business owner's question about how to use the bot.
     Returns a plain-English helpful response.
     """
+    cs = currency_symbol
     tier = _select_tier()
     provider = tier["provider"]
 
-    prompt = f"""You are TradeFlow, a Telegram bot assistant for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, a Telegram bot assistant for "{restaurant_name}" ({business_type}).
 The owner is asking a question about how to use you.
 
 QUESTION: "{question}"
@@ -742,22 +755,24 @@ COMMANDS:
   /recall [date] — recall any day or week (e.g. /recall yesterday, /recall 5 May, /recall March)
   /weeklyreport  — full AI briefing + PDF for the current week (also auto-sent every Monday 08:00)
   /financials    — revenue, costs, labour and net margin for any period
-  /labour £X [description] — record wages or labour costs
+  /labour {cs}X [description] — record wages or labour costs
   /outstanding   — unpaid invoices
   /markpaid [id] — mark an invoice as paid
   /teamstats     — who's contributing entries and how much (staff engagement)
-  /eightysix     — which menu items run out most frequently
+  /eightysix     — which items run out most frequently
   /export        — download entries as CSV for Excel or accountants
-  /correct [fix] — fix a detail in your last entry (e.g. /correct the amount was £450 not £540)
+  /correct [fix] — fix a detail in your last entry (e.g. /correct the amount was {cs}450 not {cs}540)
   /deletelast    — delete your last entry and re-send
   /import [dates]: [description] — import any historical period (day/fortnight/month/quarter)
-  /rename [name] — rename your restaurant
+  /rename [name] — rename your business
+  /setindustry [type] — set your business type (e.g. restaurant, cafe, retail, salon)
+  /currency [code] — set your currency (e.g. GBP, USD, EUR, NGN)
   /deletedata 90 — delete entries older than 90 days (GDPR compliance)
   /cleardata     — delete all entries (keeps registration)
-  /tips          — tip events log (Tips Act 2023)
+  /tips          — tip events log
   /tipsreport    — generate formal tip allocation record
-  /allergens     — allergen traceability log (Natasha's Law)
-  /inspection    — FSA inspection readiness report
+  /allergens     — allergen/product traceability log
+  /inspection    — compliance readiness report
   /ask [question]— ask me anything about the bot
   /support [msg] — report a problem to the app support team
 
@@ -872,9 +887,10 @@ Use £ for all currency. Plain text format, no filler."""
         )
 
 
-def generate_inspection_report(entries_data: list, restaurant_name: str) -> str:
+def generate_inspection_report(entries_data: list, restaurant_name: str,
+                               business_type: str = "restaurant") -> str:
     """
-    Generate a Food Standards Agency inspection preparation report.
+    Generate a compliance/inspection preparation report.
     Groups all compliance-relevant entries: supplier changes, equipment faults,
     temperature incidents, cleaning issues, staff incidents, allergen alerts.
     """
@@ -894,15 +910,13 @@ def generate_inspection_report(entries_data: list, restaurant_name: str) -> str:
 
     entries_block = "\n".join(lines) if lines else "No entries found."
 
-    prompt = f"""You are TradeFlow, preparing an inspection readiness report for "{restaurant_name}".
-UK Food Standards Agency (FSA) inspectors assess: food safety management, structural condition,
-confidence in management. They award a 0-5 star Food Hygiene Rating (public-facing).
+    prompt = f"""You are TradeFlow, preparing a compliance readiness report for "{restaurant_name}" ({business_type}).
 
 These are all operational entries recorded in the last 90 days:
 
 {entries_block}
 
-Write a FOOD HYGIENE INSPECTION READINESS REPORT:
+Write a COMPLIANCE & INSPECTION READINESS REPORT:
 
 ## INSPECTION READINESS — {restaurant_name.upper()}
 ## Generated: today
@@ -912,30 +926,29 @@ A brief verdict: Ready / Needs Attention / Action Required. 1-2 sentences.
 
 ### Supplier Traceability Log
 List all supplier changes, new suppliers, and delivery issues from the entries.
-EHOs ask for evidence of approved supplier lists and traceability records.
+Regulators ask for evidence of approved supplier lists and traceability records.
 
 ### Equipment & Maintenance Log
 List all equipment faults, repairs, and safety-related issues with dates.
-EHOs check temperature control equipment, pest control, cleaning records.
+Include temperature control equipment, pest control, and cleaning records where mentioned.
 
 ### Staff & Training Notes
-Any staff incidents, training mentions, or hygiene observations from entries.
+Any staff incidents, training mentions, or compliance observations from entries.
 
-### Temperature & Food Safety Incidents
-Any temperature concerns, cold chain issues, or food safety incidents.
+### Product/Food Safety Incidents
+Any temperature concerns, cold chain issues, or product safety incidents.
 
-### Allergen Traceability
-Any supplier changes or ingredient substitutions that could affect allergen declarations.
-Reference Natasha's Law requirements.
+### Allergen & Product Traceability
+Any supplier changes or product substitutions that could affect allergen or ingredient declarations.
 
 ### Gaps in Documentation
-What the EHO would likely flag as missing based on these records.
-Be direct — gaps in records cost hygiene rating points.
+What a regulator would likely flag as missing based on these records.
+Be direct — gaps in records cost compliance rating points.
 
 ### Pre-Inspection Action List
-Numbered list of specific steps to take before the next inspection.
+Numbered list of specific steps to take before the next inspection or audit.
 
-Use plain text, be direct, reference UK FSA inspection criteria where relevant."""
+Use plain text, be direct, and be relevant to the {business_type} industry."""
 
     try:
         if provider == "groq":
@@ -954,11 +967,13 @@ Use plain text, be direct, reference UK FSA inspection criteria where relevant."
 
 
 def generate_recall_summary(entries_data: list, query_text: str,
-                             restaurant_name: str) -> str:
+                             restaurant_name: str,
+                             currency_symbol: str = "£", business_type: str = "restaurant") -> str:
     """
     Summarise a set of entries for a date-based recall query.
     Used by the /recall command.
     """
+    cs = currency_symbol
     tier = _select_tier()
     provider = tier["provider"]
 
@@ -973,7 +988,8 @@ def generate_recall_summary(entries_data: list, query_text: str,
 
     entries_block = "\n".join(lines) if lines else "No entries found for this period."
 
-    prompt = f"""You are TradeFlow, the operational memory for "{restaurant_name}".
+    prompt = f"""You are TradeFlow, the operational memory for "{restaurant_name}" ({business_type}).
+Use {cs} for all monetary values.
 
 The owner has asked: "{query_text}"
 

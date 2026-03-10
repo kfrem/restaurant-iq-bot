@@ -345,6 +345,41 @@ def set_restaurant_currency(group_id: str, currency_code: str) -> tuple[str, str
     return code, symbol
 
 
+SUPPORTED_INDUSTRIES = {
+    "restaurant": "Restaurant",
+    "cafe": "Café",
+    "bar": "Bar",
+    "pub": "Pub",
+    "bakery": "Bakery",
+    "food truck": "Food Truck",
+    "takeaway": "Takeaway",
+    "retail": "Retail Shop",
+    "salon": "Salon",
+    "barbershop": "Barbershop",
+    "gym": "Gym",
+    "hotel": "Hotel",
+    "spa": "Spa",
+    "laundry": "Laundry",
+    "pharmacy": "Pharmacy",
+    "supermarket": "Supermarket",
+    "general": "General Business",
+}
+
+
+def set_restaurant_industry(group_id: str, industry: str) -> str:
+    """Set the business type/industry for a restaurant. Returns normalised industry string."""
+    normalised = industry.strip().lower()
+    # Accept known types or any free text (just store as-is if unknown)
+    with _db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE restaurants SET industry = ? WHERE telegram_group_id = ?",
+            (normalised, str(group_id)),
+        )
+        conn.commit()
+    return normalised
+
+
 def register_staff(restaurant_id: int, telegram_user_id: str, name: str, role: str = "staff"):
     with _db() as conn:
         c = conn.cursor()

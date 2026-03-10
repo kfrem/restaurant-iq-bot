@@ -114,6 +114,8 @@ from database import (
     get_restaurant_currency,
     set_restaurant_currency,
     SUPPORTED_CURRENCIES,
+    set_restaurant_industry,
+    SUPPORTED_INDUSTRIES,
 )
 from transcriber import transcribe_audio
 from analyzer import analyze_text_entry, analyze_invoice_photo, generate_weekly_report
@@ -832,7 +834,8 @@ async def cmd_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Use a dedicated correction prompt — NOT the general analysis prompt.
     # The general prompt would read the correction as new data, not as a fix.
-    analysis = analyze_correction(original_text, correction, restaurant["name"])
+    analysis = analyze_correction(original_text, correction, restaurant["name"],
+                                  _cs(restaurant), restaurant.get("industry", "restaurant"))
     # Store the corrected text cleanly — just the original with the fix noted
     corrected_text = f"{original_text} [corrected: {correction}]"
     update_entry(last["id"], corrected_text, json.dumps(analysis), analysis.get("category", last["category"]))
@@ -1010,7 +1013,8 @@ async def cmd_recall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(item)
 
-    summary = generate_recall_summary(entries_data, query_text, restaurant["name"])
+    summary = generate_recall_summary(entries_data, query_text, restaurant["name"],
+                                      _cs(restaurant), restaurant.get("industry", "restaurant"))
 
     await update.message.reply_text(
         f"Recall: {restaurant['name']} — {period_fmt}\n"
@@ -1962,7 +1966,8 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question = " ".join(context.args)
     await update.message.reply_text("Looking that up for you...")
 
-    answer = answer_help_question(question, restaurant["name"])
+    answer = answer_help_question(question, restaurant["name"],
+                                  _cs(restaurant), restaurant.get("industry", "restaurant"))
     await update.message.reply_text(
         f"Q: {question}\n\n"
         f"{answer}\n\n"
@@ -2088,7 +2093,8 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"The AI will create proportional entries from your description."
     )
 
-    entries = analyze_history_import(description, start_date, end_date, restaurant["name"])
+    entries = analyze_history_import(description, start_date, end_date, restaurant["name"],
+                                     _cs(restaurant), restaurant.get("industry", "restaurant"))
 
     if not entries:
         await update.message.reply_text(
@@ -2465,7 +2471,8 @@ async def cmd_inspection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         entries_data.append(item)
 
-    report = generate_inspection_report(entries_data, restaurant["name"])
+    report = generate_inspection_report(entries_data, restaurant["name"],
+                                         restaurant.get("industry", "restaurant"))
 
     # Also append open allergen alerts
     open_alerts = [a for a in get_allergen_alerts(restaurant["id"], days_back=90) if not a["resolved"]]
@@ -3365,7 +3372,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Could not transcribe — audio may be too short or unclear.")
             return
 
-        analysis = analyze_text_entry(text, restaurant["name"])
+        analysis = analyze_text_entry(text, restaurant["name"],
+                                      _cs(restaurant), restaurant.get("industry", "restaurant"))
         entry_id = save_entry(
             restaurant["id"],
             staff["id"],
@@ -3417,7 +3425,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Got the photo. Reading it now...")
 
     try:
-        analysis = analyze_invoice_photo(file_path, restaurant["name"])
+        analysis = analyze_invoice_photo(file_path, restaurant["name"],
+                                         _cs(restaurant), restaurant.get("industry", "restaurant"))
         raw_text = (
             f"Photo from {update.effective_user.first_name}: "
             f"{analysis.get('summary', 'Document captured')}"
@@ -3510,7 +3519,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     staff = _ensure_staff(restaurant["id"], update.effective_user)
 
-    analysis = analyze_text_entry(text, restaurant["name"])
+    analysis = analyze_text_entry(text, restaurant["name"],
+                                  _cs(restaurant), restaurant.get("industry", "restaurant"))
     entry_id = save_entry(
         restaurant["id"],
         staff["id"],
@@ -3779,6 +3789,52 @@ async def cmd_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def cmd_setindustry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setindustry [type] — view or set your business type.
+
+    This affects how the AI analyses your data and writes reports.
+
+    Examples:
+      /setindustry               — show current business type
+      /setindustry cafe          — set to Café
+      /setindustry retail        — set to Retail Shop
+      /setindustry salon         — set to Salon
+      /setindustry bakery        — set to Bakery
+    """
+    restaurant = await _require_restaurant(update)
+    if not restaurant:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        current = restaurant.get("industry") or "restaurant"
+        display = SUPPORTED_INDUSTRIES.get(current, current.title())
+        supported = "\n".join(
+            f"  {key} — {label}"
+            for key, label in SUPPORTED_INDUSTRIES.items()
+        )
+        await update.message.reply_text(
+            f"Business Type — {restaurant['name']}\n"
+            f"{'─' * 36}\n"
+            f"Current: {display}\n\n"
+            f"To change: /setindustry TYPE\n\n"
+            f"Supported types:\n{supported}\n\n"
+            f"Not in the list? Type any word (e.g. /setindustry florist) and it will be saved."
+        )
+        return
+
+    industry = " ".join(context.args).lower().strip()
+    set_restaurant_industry(chat_id, industry)
+    display = SUPPORTED_INDUSTRIES.get(industry, industry.title())
+    await update.message.reply_text(
+        f"Business type updated to *{display}*\n\n"
+        f"The AI will now analyse data and write reports as a {display} — "
+        f"not as a generic restaurant.",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/version — show when this bot was last deployed and what changed."""
     info = _get_version_info()
@@ -3994,6 +4050,7 @@ def main():
     app.add_handler(CommandHandler("outstanding", cmd_outstanding))
     app.add_handler(CommandHandler("markpaid", cmd_markpaid))
     app.add_handler(CommandHandler("currency", cmd_currency))
+    app.add_handler(CommandHandler("setindustry", cmd_setindustry))
     app.add_handler(CommandHandler("version", cmd_version))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demoreset", cmd_demoreset))
