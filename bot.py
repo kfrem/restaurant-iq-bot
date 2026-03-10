@@ -604,8 +604,9 @@ async def _reg_got_legal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"*Step 4 of 4 — About the Business*\n"
-        f"Cuisine type, number of covers and number of locations?\n"
-        f"_(e.g. Italian, 60 covers, 3 locations)_\n\n"
+        f"Brief description: what you do, size, number of locations?\n"
+        f"_(e.g. Plumbing contractor, 4 vans, North London)_\n"
+        f"_(e.g. Italian restaurant, 60 covers, 2 sites)_\n\n"
         f"{_SKIP_HINT}",
         parse_mode="Markdown",
     )
@@ -618,17 +619,11 @@ async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not _is_skip(text):
         import re as _re
-        covers_match = _re.search(r'(\d+)\s*covers?', text, _re.I)
-        branches_match = _re.search(r'(\d+)\s*(location|branch|site|outlet)s?', text, _re.I)
-        num_covers = int(covers_match.group(1)) if covers_match else None
+        branches_match = _re.search(r'(\d+)\s*(location|branch|site|outlet|van|truck|unit)s?', text, _re.I)
         num_branches = int(branches_match.group(1)) if branches_match else None
-        # Cuisine: first word(s) before any number
-        cuisine_match = _re.match(r'^([A-Za-z\s&/-]+?)(?:\s*,|\s*\d|$)', text)
-        cuisine = cuisine_match.group(1).strip() if cuisine_match else None
         update_restaurant_profile(
             chat_id,
-            cuisine_type=cuisine,
-            num_covers=num_covers,
+            cuisine_type=text,
             num_branches=num_branches,
             profile_complete=1,
         )
@@ -645,8 +640,7 @@ async def _reg_got_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Email": restaurant["email"],
             "Company No": restaurant["company_number"],
             "VAT No": restaurant["vat_number"],
-            "Cuisine": restaurant["cuisine_type"],
-            "Covers": restaurant["num_covers"],
+            "About": restaurant["cuisine_type"],
             "Locations": restaurant["num_branches"],
         }
         for label, val in fields.items():
