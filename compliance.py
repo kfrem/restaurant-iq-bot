@@ -531,3 +531,372 @@ def allergen_enabled(restaurant: dict) -> bool:
 def inspection_enabled(restaurant: dict) -> bool:
     """True if food inspection readiness reporting is relevant for this business."""
     return is_food_business(restaurant)
+
+
+# ── Supported languages ───────────────────────────────────────────────────────
+
+SUPPORTED_LANGUAGES: dict[str, str] = {
+    "en": "English",
+    "fr": "Français (French)",
+}
+
+# ── Country regions / sub-regions ─────────────────────────────────────────────
+# Used in registration step 2.
+# Each list is ordered from most populous / likely first.
+# Include "Other" as the final entry so users can type a custom region.
+
+COUNTRY_REGIONS: dict[str, list[str]] = {
+    "GB": [
+        "London",
+        "South East England",
+        "North West England",
+        "Yorkshire & Humber",
+        "Midlands",
+        "South West England",
+        "East of England",
+        "North East England",
+        "Scotland",
+        "Wales",
+        "Northern Ireland",
+        "Other",
+    ],
+    "US": [
+        "California",
+        "Texas",
+        "New York",
+        "Florida",
+        "Illinois",
+        "Pennsylvania",
+        "Ohio",
+        "Georgia",
+        "North Carolina",
+        "Michigan",
+        "Other (type your state)",
+    ],
+    "AU": [
+        "New South Wales",
+        "Victoria",
+        "Queensland",
+        "Western Australia",
+        "South Australia",
+        "Tasmania",
+        "Australian Capital Territory",
+        "Northern Territory",
+        "Other",
+    ],
+    "EU": [
+        "France",
+        "Germany",
+        "Spain",
+        "Italy",
+        "Netherlands",
+        "Belgium",
+        "Ireland",
+        "Portugal",
+        "Poland",
+        "Sweden",
+        "Other EU country",
+    ],
+    "NG": [
+        "Lagos",
+        "Abuja (FCT)",
+        "Kano",
+        "Rivers",
+        "Oyo",
+        "Delta",
+        "Anambra",
+        "Enugu",
+        "Kaduna",
+        "Ogun",
+        "Other (type your state)",
+    ],
+    "KE": [
+        "Nairobi",
+        "Mombasa",
+        "Kisumu",
+        "Nakuru",
+        "Eldoret",
+        "Thika",
+        "Malindi",
+        "Kitale",
+        "Other (type your county)",
+    ],
+    "ZA": [
+        "Gauteng",
+        "Western Cape",
+        "KwaZulu-Natal",
+        "Eastern Cape",
+        "Limpopo",
+        "Mpumalanga",
+        "North West",
+        "Free State",
+        "Northern Cape",
+        "Other",
+    ],
+    "GH": [
+        "Greater Accra",
+        "Ashanti",
+        "Northern",
+        "Western",
+        "Eastern",
+        "Central",
+        "Volta",
+        "Upper East",
+        "Upper West",
+        "Bono",
+        "Other",
+    ],
+    "UG": [
+        "Central Region (Kampala)",
+        "Eastern Region",
+        "Northern Region",
+        "Western Region",
+        "Other",
+    ],
+    "TZ": [
+        "Dar es Salaam",
+        "Mwanza",
+        "Arusha",
+        "Dodoma",
+        "Mbeya",
+        "Morogoro",
+        "Zanzibar",
+        "Other",
+    ],
+}
+
+# ── Industry hierarchy ────────────────────────────────────────────────────────
+# Sector → sub-sectors.
+# The industry field in the database stores the sub-sector key (e.g. "restaurant").
+# The sector key is stored in sub_industry for grouping/display.
+# "food_industries" marks food-related sub-sectors for compliance gating.
+
+INDUSTRY_HIERARCHY: dict[str, dict] = {
+    "food_beverage": {
+        "label_key": "sector.food_beverage",
+        "emoji": "🍽️",
+        "is_food": True,
+        "sub_sectors": {
+            "restaurant":   "subsector.restaurant",
+            "cafe":         "subsector.cafe",
+            "bar":          "subsector.bar",
+            "pub":          "subsector.pub",
+            "bakery":       "subsector.bakery",
+            "food_truck":   "subsector.food_truck",
+            "takeaway":     "subsector.takeaway",
+            "catering":     "subsector.catering",
+        },
+    },
+    "retail": {
+        "label_key": "sector.retail",
+        "emoji": "🛍️",
+        "is_food": False,
+        "sub_sectors": {
+            "retail":       "subsector.retail",
+            "supermarket":  "subsector.supermarket",
+            "pharmacy":     "subsector.pharmacy",
+            "clothing":     "subsector.clothing",
+            "electronics":  "subsector.electronics",
+            "hardware":     "subsector.hardware",
+        },
+    },
+    "health_beauty": {
+        "label_key": "sector.health_beauty",
+        "emoji": "💇",
+        "is_food": False,
+        "sub_sectors": {
+            "salon":        "subsector.salon",
+            "barbershop":   "subsector.barbershop",
+            "spa":          "subsector.spa",
+            "gym":          "subsector.gym",
+            "clinic":       "subsector.clinic",
+        },
+    },
+    "professional_services": {
+        "label_key": "sector.professional_services",
+        "emoji": "🔧",
+        "is_food": False,
+        "sub_sectors": {
+            "laundry":          "subsector.laundry",
+            "cleaning":         "subsector.cleaning",
+            "logistics":        "subsector.logistics",
+            "trades":           "subsector.trades",
+            "general_services": "subsector.general_services",
+        },
+    },
+    "hospitality": {
+        "label_key": "sector.hospitality",
+        "emoji": "🏨",
+        "is_food": False,
+        "sub_sectors": {
+            "hotel":        "subsector.hotel",
+            "guesthouse":   "subsector.guesthouse",
+            "events_venue": "subsector.events_venue",
+        },
+    },
+    "other": {
+        "label_key": "sector.other",
+        "emoji": "🏪",
+        "is_food": False,
+        "sub_sectors": {
+            "general":      "subsector.general",
+        },
+    },
+}
+
+# Map sub-sector key → sector key (reverse lookup)
+SUBSECTOR_TO_SECTOR: dict[str, str] = {
+    sub: sector
+    for sector, data in INDUSTRY_HIERARCHY.items()
+    for sub in data["sub_sectors"]
+}
+
+# Map sub-sector key → is_food bool
+SUBSECTOR_IS_FOOD: dict[str, bool] = {
+    sub: data["is_food"]
+    for sector, data in INDUSTRY_HIERARCHY.items()
+    for sub in data["sub_sectors"]
+}
+
+
+def get_sector_for_industry(industry: str) -> str | None:
+    """Return the sector key for a given sub-sector/industry key."""
+    return SUBSECTOR_TO_SECTOR.get(industry)
+
+
+# ── Feature catalogue ─────────────────────────────────────────────────────────
+# Every feature in the app is listed here.
+# "food_only": True means the feature is only shown/active for food businesses.
+# "default_on": True means it's enabled by default at registration.
+# The "disabled_features" column in the database stores a JSON list of DISABLED keys.
+# An absent/empty disabled_features means ALL features are on.
+
+FEATURE_CATALOGUE: dict[str, dict] = {
+    "weekly_report": {
+        "label_key":   "feature.weekly_report",
+        "command":     "/weeklyreport",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "financials": {
+        "label_key":   "feature.financials",
+        "command":     "/financials",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "invoices": {
+        "label_key":   "feature.invoices",
+        "command":     "/outstanding, /markpaid",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "rota": {
+        "label_key":   "feature.rota",
+        "command":     "/rota",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "stock": {
+        "label_key":   "feature.stock",
+        "command":     "/stock",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "labour": {
+        "label_key":   "feature.labour",
+        "command":     "/labour",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "tips": {
+        "label_key":   "feature.tips",
+        "command":     "/tips, /tipsreport",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "export": {
+        "label_key":   "feature.export",
+        "command":     "/export",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "dashboard": {
+        "label_key":   "feature.dashboard",
+        "command":     "/dashboard",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "import_history": {
+        "label_key":   "feature.import_history",
+        "command":     "/import",
+        "food_only":   False,
+        "default_on":  True,
+    },
+    "allergens": {
+        "label_key":   "feature.allergens",
+        "command":     "/allergens, /resolvallergen",
+        "food_only":   True,
+        "default_on":  True,
+    },
+    "eightysix": {
+        "label_key":   "feature.eightysix",
+        "command":     "/eightysix",
+        "food_only":   True,
+        "default_on":  True,
+    },
+    "inspection": {
+        "label_key":   "feature.inspection",
+        "command":     "/inspection",
+        "food_only":   True,
+        "default_on":  True,
+    },
+}
+
+
+def get_applicable_features(restaurant: dict) -> list[str]:
+    """
+    Return the list of feature keys that are applicable for this business type.
+    Filters out food_only features for non-food businesses.
+    """
+    food = is_food_business(restaurant)
+    return [
+        key for key, meta in FEATURE_CATALOGUE.items()
+        if not meta["food_only"] or food
+    ]
+
+
+def feature_enabled(restaurant: dict, feature_key: str) -> bool:
+    """
+    True if this feature is enabled for this restaurant.
+    Checks both applicability (food_only gate) and the disabled_features list.
+    """
+    import json as _json
+    # First: is the feature applicable at all?
+    meta = FEATURE_CATALOGUE.get(feature_key)
+    if meta and meta.get("food_only") and not is_food_business(restaurant):
+        return False
+    # Second: has the user explicitly disabled it?
+    raw = restaurant.get("disabled_features") or "[]"
+    try:
+        disabled = _json.loads(raw)
+    except (ValueError, TypeError):
+        disabled = []
+    return feature_key not in disabled
+
+
+def build_compliance_summary(restaurant: dict, lang: str = "en") -> str:
+    """
+    Return a short multi-line summary of which compliance features apply,
+    using the correct law names for this restaurant's country.
+    Used in the registration confirmation message.
+    """
+    comp = get_compliance(restaurant)
+    lines = []
+    if comp.get("tips_enabled"):
+        lines.append(f"  • {comp['tips_law']}")
+    if is_food_business(restaurant):
+        lines.append(f"  • {comp['allergen_law']}")
+        lines.append(f"  • {comp['inspection_body']}")
+    lines.append(f"  • {comp['data_law']}")
+    return "\n".join(lines) if lines else "  Standard business compliance"
+
